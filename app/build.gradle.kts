@@ -58,7 +58,8 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.github.catfriend1.syncthingfork"
+        // 独立包名，使本 fork 可与官方 Syncthing-Fork 共存安装
+        applicationId = "com.qtjay.syncthingfork.opt"
         minSdk = libs.versions.min.sdk.get().toInt()
         targetSdk = libs.versions.target.sdk.get().toInt()
         versionCode = libs.versions.version.code.get().toInt()
