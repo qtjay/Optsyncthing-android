@@ -799,4 +799,5 @@
     <string name="selective_sync_delete_safe">只删安全项</string>
     <string name="selective_sync_delete_all">全部删除</string>
     <string name="selective_sync_deleted_count">已删除 %1$d / %2$d 项。</string>
+    <string name="selective_sync_deleting">正在应用忽略规则，随后删除本地文件…</string>
 </resources>

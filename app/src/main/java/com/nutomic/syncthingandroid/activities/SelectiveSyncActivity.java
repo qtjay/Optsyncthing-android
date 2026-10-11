@@ -35,6 +35,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 选择性同步：浏览远端（全局模型）目录树，勾选需要同步的文件夹或文件。
@@ -451,25 +453,63 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             mStore.save(mFolder.id, mSelectedDirs, mSelectedFiles);
             showWarnings(result.warnings);
 
-            if (pathsToDelete != null && !pathsToDelete.isEmpty()) {
-                int deleted = 0;
-                for (String path : pathsToDelete) {
-                    if (deleteRecursively(new File(mFolder.path, path))) {
-                        deleted++;
-                    }
-                }
-                Toast.makeText(SelectiveSyncActivity.this,
-                        getString(R.string.selective_sync_deleted_count, deleted, pathsToDelete.size()),
-                        Toast.LENGTH_SHORT).show();
-            }
             if (restApi != null && restApi.isConfigLoaded()) {
                 restApi.rescanFolder(mFolder.id);
             }
+
+            if (pathsToDelete != null && !pathsToDelete.isEmpty()) {
+                Toast.makeText(SelectiveSyncActivity.this, R.string.selective_sync_deleting,
+                        Toast.LENGTH_SHORT).show();
+                final ExecutorService executor = Executors.newSingleThreadExecutor();
+                final Handler mainHandler = new Handler(Looper.getMainLooper());
+                executor.execute(() -> {
+                    // 必须等忽略规则生效后再删：否则 Syncthing 会把这次删除
+                    // 当作本地真实删除并传播到远端，造成远端数据丢失。
+                    waitForFolderIdle(restApi, 20000L);
+                    int deleted = 0;
+                    for (String path : pathsToDelete) {
+                        if (deleteRecursively(new File(mFolder.path, path))) {
+                            deleted++;
+                        }
+                    }
+                    final int finalDeleted = deleted;
+                    mainHandler.post(() -> {
+                        Toast.makeText(SelectiveSyncActivity.this,
+                                getString(R.string.selective_sync_deleted_count,
+                                        finalDeleted, pathsToDelete.size()),
+                                Toast.LENGTH_SHORT).show();
+                        Toast.makeText(SelectiveSyncActivity.this, R.string.selective_sync_saved,
+                                Toast.LENGTH_SHORT).show();
+                        setResult(RESULT_OK);
+                        finish();
+                    });
+                });
+                executor.shutdown();
+                return;
+            }
+
             Toast.makeText(SelectiveSyncActivity.this, R.string.selective_sync_saved,
                     Toast.LENGTH_SHORT).show();
             setResult(RESULT_OK);
             finish();
         });
+    }
+
+    /** 等待文件夹回到 idle，最多等待 timeoutMs 毫秒。 */
+    private void waitForFolderIdle(RestApi restApi, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            FolderStatus status = readFolderStatus(restApi);
+            if (status != null && "idle".equals(status.state)) {
+                return;
+            }
+            try {
+                Thread.sleep(500L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     private boolean deleteRecursively(File file) {

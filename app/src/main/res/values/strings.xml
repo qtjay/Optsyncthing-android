@@ -1178,4 +1178,5 @@
     <string name="selective_sync_delete_safe">Remove safe ones</string>
     <string name="selective_sync_delete_all">Remove all</string>
     <string name="selective_sync_deleted_count">Removed %1$d of %2$d item(s).</string>
+    <string name="selective_sync_deleting">Applying ignore rules, then removing local files…</string>
 </resources>
