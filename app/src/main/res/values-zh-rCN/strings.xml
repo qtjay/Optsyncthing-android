@@ -775,4 +775,17 @@
     <string name="show_exact_times">显示确切时间</string>
     <string name="local_network_permission_title">本地网络权限</string>
     <string name="local_network_permission_desc">在 Android 17 及更高版本中，本地网络访问需要明确的权限。这是在局域网上进行本地发现和直接传输所必需的。</string>
+
+    <!-- 选择性同步 Selective sync -->
+    <string name="selective_sync_open">选择性同步…</string>
+    <string name="selective_sync_hint">选择需要在本机同步的文件夹与文件，其余内容保留在其他设备上。</string>
+    <string name="selective_sync_summary">勾选需要在本机保留的内容。未勾选的内容不会下载到本机，也不会从本机上传；远端新增内容默认不同步，需重新勾选。</string>
+    <string name="selective_sync_root">（文件夹根目录）</string>
+    <string name="selective_sync_inherited">已随父目录同步</string>
+    <string name="selective_sync_clear">清空选择</string>
+    <string name="selective_sync_save">保存</string>
+    <string name="selective_sync_empty">暂无内容，Syncthing 可能仍在索引该文件夹。</string>
+    <string name="selective_sync_waiting">正在等待 Syncthing 启动…</string>
+    <string name="selective_sync_saved">已保存，正在重新扫描该文件夹。</string>
+    <string name="selective_sync_folder_not_found">未找到该文件夹。</string>
 </resources>

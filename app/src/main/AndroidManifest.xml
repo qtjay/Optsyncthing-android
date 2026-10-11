@@ -183,6 +183,13 @@
                 android:name="android.support.PARENT_ACTIVITY"
                 android:value=".activities.MainActivity" />
         </activity>
+        <activity android:name=".activities.SelectiveSyncActivity"
+            android:parentActivityName=".activities.MainActivity"
+            android:windowSoftInputMode="stateHidden">
+            <meta-data
+                android:name="android.support.PARENT_ACTIVITY"
+                android:value=".activities.MainActivity" />
+        </activity>
         <activity android:name=".settings.SettingsActivity"
             android:label="@string/settings_title"
             android:configChanges="orientation|screenSize"

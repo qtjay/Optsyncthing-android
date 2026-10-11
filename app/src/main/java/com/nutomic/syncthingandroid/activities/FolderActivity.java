@@ -375,6 +375,16 @@ public class FolderActivity extends SyncthingActivity {
             mPathView.setEnabled(false);
             mSelectAdvancedDirectory.setVisibility(View.GONE);
         }
+
+        // 选择性同步：浏览远端目录树并勾选需要同步的内容。
+        View selectiveSyncButton = findViewById(R.id.selectiveSyncButton);
+        selectiveSyncButton.setEnabled(!mIsCreateMode);
+        selectiveSyncButton.setOnClickListener(v -> {
+            Intent intent = new Intent(FolderActivity.this, SelectiveSyncActivity.class);
+            intent.putExtra(SelectiveSyncActivity.EXTRA_FOLDER_ID, mFolder.id);
+            startActivity(intent);
+        });
+
         folderTypeContainer.setEnabled(!mFolder.type.equals(Constants.FOLDER_TYPE_RECEIVE_ENCRYPTED));
         checkWriteAndUpdateUI();
         updateViewsAndSetListeners();

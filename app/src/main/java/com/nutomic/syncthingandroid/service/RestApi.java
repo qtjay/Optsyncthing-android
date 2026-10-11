@@ -25,6 +25,7 @@ import com.nutomic.syncthingandroid.SyncthingApp;
 import com.nutomic.syncthingandroid.activities.ShareActivity;
 import com.nutomic.syncthingandroid.http.GetRequest;
 import com.nutomic.syncthingandroid.http.PostRequest;
+import com.nutomic.syncthingandroid.model.BrowseEntry;
 import com.nutomic.syncthingandroid.model.CachedFolderStatus;
 import com.nutomic.syncthingandroid.model.CompletionInfo;
 import com.nutomic.syncthingandroid.model.Config;
@@ -866,6 +867,44 @@ public class RestApi {
         folderIgnoreList.ignore = ignore;
         new PostRequest(mContext, mUrl, PostRequest.URI_DB_IGNORES, mApiKey,
             ImmutableMap.of("folder", folderId), mGson.toJson(folderIgnoreList), null);
+    }
+
+    /**
+     * Requests one level of the global model tree for the given folder.
+     *
+     * <p>This is an expensive call on the syncthing side (CPU and RAM), so callers
+     * should request small prefixes only and cache the result.
+     *
+     * @param prefix path relative to the folder root, empty string for the root
+     * @param levels how deep to dwell down, keep it at 1 for interactive browsing
+     */
+    public void getFolderBrowse(String folderId, String prefix, int levels,
+                                OnResultListener1<List<BrowseEntry>> listener) {
+        Map<String, String> params = new HashMap<>();
+        params.put("folder", folderId);
+        if (prefix != null && !prefix.isEmpty()) {
+            params.put("prefix", prefix);
+        }
+        params.put("levels", String.valueOf(levels));
+        new GetRequest(mContext, mUrl, GetRequest.URI_DB_BROWSE, mApiKey, params, result -> {
+            List<BrowseEntry> entries = new ArrayList<>();
+            if (result != null) {
+                BrowseEntry[] parsed = mGson.fromJson(result, BrowseEntry[].class);
+                if (parsed != null) {
+                    Collections.addAll(entries, parsed);
+                }
+            }
+            listener.onResult(entries);
+        }, error -> listener.onResult(Collections.<BrowseEntry>emptyList()));
+    }
+
+    /**
+     * Triggers a rescan of a single folder, so that changed ignore patterns take effect.
+     */
+    public void rescanFolder(String folderId) {
+        Log.d(TAG, "rescanFolder '" + folderId + "'");
+        new PostRequest(mContext, mUrl, PostRequest.URI_DB_SCAN, mApiKey,
+            ImmutableMap.of("folder", folderId), null, null);
     }
 
     /**

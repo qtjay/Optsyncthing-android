@@ -1154,4 +1154,17 @@
     <string name="cert_check_trust">Trusted by this device</string>
     <string name="cert_check_validity">Validity period</string>
     <string name="cert_check_key">Private key</string>
+
+    <!-- 选择性同步 Selective sync -->
+    <string name="selective_sync_open">Selective sync…</string>
+    <string name="selective_sync_hint">Choose the folders and files to sync. Everything else stays on the other devices.</string>
+    <string name="selective_sync_summary">Tick what you want on this device. Unticked items are not downloaded and not uploaded from here; new remote content is not synced until you tick it.</string>
+    <string name="selective_sync_root">(folder root)</string>
+    <string name="selective_sync_inherited">Synced through its parent folder</string>
+    <string name="selective_sync_clear">Clear</string>
+    <string name="selective_sync_save">Save</string>
+    <string name="selective_sync_empty">Nothing to show. Syncthing may still be indexing this folder.</string>
+    <string name="selective_sync_waiting">Waiting for Syncthing to start…</string>
+    <string name="selective_sync_saved">Saved, rescanning folder.</string>
+    <string name="selective_sync_folder_not_found">Folder not found.</string>
 </resources>
