@@ -17,6 +17,8 @@ public class SelectiveSyncStore {
 
     private static final String PREF_FILES = "selective_sync_files_";
 
+    private static final String PREF_ENABLED = "selective_sync_enabled_";
+
     private final SharedPreferences mPreferences;
 
     public SelectiveSyncStore(SharedPreferences preferences) {
@@ -47,6 +49,18 @@ public class SelectiveSyncStore {
                 .putStringSet(PREF_DIRS + folderId, new LinkedHashSet<>(dirs))
                 .putStringSet(PREF_FILES + folderId, new LinkedHashSet<>(files))
                 .apply();
+    }
+
+    /** 是否启用选择性同步；未设置过（从未启用）时返回 null。 */
+    public Boolean isEnabled(String folderId) {
+        if (!mPreferences.contains(PREF_ENABLED + folderId)) {
+            return null;
+        }
+        return mPreferences.getBoolean(PREF_ENABLED + folderId, false);
+    }
+
+    public void setEnabled(String folderId, boolean enabled) {
+        mPreferences.edit().putBoolean(PREF_ENABLED + folderId, enabled).apply();
     }
 
     public void clear(String folderId) {

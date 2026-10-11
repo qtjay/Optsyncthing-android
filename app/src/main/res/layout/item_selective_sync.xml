@@ -8,6 +8,18 @@
     android:paddingEnd="4dp"
     android:minHeight="48dp">
 
+    <TextView
+        android:id="@+id/indent"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
+    <TextView
+        android:id="@+id/expander"
+        android:layout_width="24dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textAppearance="@style/TextAppearance.AppCompat.Body1" />
+
     <CheckBox
         android:id="@+id/checkbox"
         android:layout_width="wrap_content"

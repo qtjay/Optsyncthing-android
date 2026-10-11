@@ -20,19 +20,26 @@
             android:background="?android:windowBackground"
             android:padding="8dp">
 
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/enableSwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="@string/selective_sync_enable" />
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/selective_sync_summary"
+                android:text="@string/selective_sync_switch_hint"
                 android:textAppearance="@style/TextAppearance.AppCompat.Caption" />
 
             <TextView
                 android:id="@+id/current_path"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/selective_sync_root"
-                android:textAppearance="@style/TextAppearance.AppCompat.Body1" />
+                android:layout_marginTop="4dp"
+                android:text="@string/selective_sync_summary"
+                android:textAppearance="@style/TextAppearance.AppCompat.Caption" />
 
             <ListView
                 android:id="@+id/list"

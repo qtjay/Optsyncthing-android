@@ -129,9 +129,25 @@ public final class SelectiveSyncPatterns {
                                        List<String> selected,
                                        Set<String> dirs,
                                        int maxPatterns) {
-        Pair<List<String>, List<String>> built = buildBlock(selected, dirs, maxPatterns);
-        List<String> blockLines = built.first;
-        List<String> warnings = built.second;
+        return buildStignore(existingText, selected, dirs, maxPatterns, true);
+    }
+
+    /**
+     * @param enabled false 表示关闭选择性同步（转为全部同步）：
+     *                只保留用户自有规则，移除托管块；选择集仍保留，可随时再开启。
+     */
+    public static Result buildStignore(String existingText,
+                                       List<String> selected,
+                                       Set<String> dirs,
+                                       int maxPatterns,
+                                       boolean enabled) {
+        List<String> warnings = new ArrayList<>();
+        List<String> blockLines = new ArrayList<>();
+        if (enabled) {
+            Pair<List<String>, List<String>> built = buildBlock(selected, dirs, maxPatterns);
+            blockLines = built.first;
+            warnings = built.second;
+        }
 
         List<String> kept = new ArrayList<>();
         boolean skipping = false;
@@ -156,6 +172,14 @@ public final class SelectiveSyncPatterns {
         }
 
         List<String> out = new ArrayList<>(kept);
+        if (!enabled) {
+            // 全部同步：不再写入托管块
+            StringBuilder plain = new StringBuilder();
+            for (String line : out) {
+                plain.append(line).append('\n');
+            }
+            return new Result(plain.toString(), warnings);
+        }
         if (!out.isEmpty()) {
             out.add("");
         }
