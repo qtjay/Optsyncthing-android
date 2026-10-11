@@ -37,6 +37,7 @@ import com.nutomic.syncthingandroid.model.DiscoveredDevice;
 import com.nutomic.syncthingandroid.model.DiskEvent;
 import com.nutomic.syncthingandroid.model.Event;
 import com.nutomic.syncthingandroid.model.Folder;
+import com.nutomic.syncthingandroid.model.FolderFileEntry;
 import com.nutomic.syncthingandroid.model.FolderIgnoreList;
 import com.nutomic.syncthingandroid.model.FolderStatus;
 import com.nutomic.syncthingandroid.model.Gui;
@@ -896,6 +897,32 @@ public class RestApi {
             }
             listener.onResult(entries);
         }, error -> listener.onResult(Collections.<BrowseEntry>emptyList()));
+    }
+
+    /**
+     * 查询单个文件在全局模型中的信息，用于判断"远端是否还持有该文件"。
+     */
+    public void getFolderFile(String folderId, String path,
+                              OnResultListener1<FolderFileEntry> listener) {
+        Map<String, String> params = new HashMap<>();
+        params.put("folder", folderId);
+        params.put("file", path);
+        new GetRequest(mContext, mUrl, GetRequest.URI_DB_FILE, mApiKey, params, result -> {
+            FolderFileEntry entry = null;
+            if (result != null) {
+                try {
+                    entry = mGson.fromJson(result, FolderFileEntry.class);
+                } catch (Exception e) {
+                    Log.w(TAG, "getFolderFile: 解析失败", e);
+                }
+            }
+            listener.onResult(entry);
+        }, error -> listener.onResult(null));
+    }
+
+    /** 本机设备 ID，用于判断 availability 里是否包含其它设备。 */
+    public String getLocalDeviceId() {
+        return mLocalDeviceId;
     }
 
     /**

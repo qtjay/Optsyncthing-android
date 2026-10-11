@@ -788,4 +788,15 @@
     <string name="selective_sync_waiting">正在等待 Syncthing 启动…</string>
     <string name="selective_sync_saved">已保存，正在重新扫描该文件夹。</string>
     <string name="selective_sync_folder_not_found">未找到该文件夹。</string>
+    <string name="selective_sync_from_cache">正在显示本机缓存的目录结构，同时刷新中…</string>
+    <string name="selective_sync_offline_no_delete">Syncthing 当前不可用，为安全起见保留本地文件。</string>
+    <string name="selective_sync_removal_title">删除取消勾选的内容？</string>
+    <string name="selective_sync_safe_to_delete">其它设备上仍有副本，删除本地副本是安全的：</string>
+    <string name="selective_sync_risky_header">其它设备上不存在，删除有风险：</string>
+    <string name="selective_sync_remote_missing">远端无副本</string>
+    <string name="selective_sync_dir_manual">目录，删除前请自行确认</string>
+    <string name="selective_sync_keep_files">保留文件</string>
+    <string name="selective_sync_delete_safe">只删安全项</string>
+    <string name="selective_sync_delete_all">全部删除</string>
+    <string name="selective_sync_deleted_count">已删除 %1$d / %2$d 项。</string>
 </resources>

@@ -52,11 +52,14 @@ import com.nutomic.syncthingandroid.service.SyncthingServiceBinder;
 import com.nutomic.syncthingandroid.util.ConfigRouter;
 import com.nutomic.syncthingandroid.util.FileUtils;
 import com.nutomic.syncthingandroid.util.FileUtils.ExternalStorageDirType;
+import com.nutomic.syncthingandroid.util.SelectiveSyncPatterns;
 import com.nutomic.syncthingandroid.util.TextWatcherAdapter;
 import com.nutomic.syncthingandroid.util.Util;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -109,6 +112,8 @@ public class FolderActivity extends SyncthingActivity {
 
     private ConfigRouter mConfig;
     private Folder mFolder;
+    private View mSelectiveSyncButton;
+    private SwitchCompat mSelectiveSyncSwitch;
     // Contains SAF readwrite access URI on API level >= Build.VERSION_CODES.LOLLIPOP (21)
     private Uri mFolderUri = null;
     // Indicates the result of the write test to mFolder.path on dialog init or after a path change.
@@ -376,14 +381,14 @@ public class FolderActivity extends SyncthingActivity {
             mSelectAdvancedDirectory.setVisibility(View.GONE);
         }
 
-        // 选择性同步：浏览远端目录树并勾选需要同步的内容。
-        View selectiveSyncButton = findViewById(R.id.selectiveSyncButton);
-        selectiveSyncButton.setEnabled(!mIsCreateMode);
-        selectiveSyncButton.setOnClickListener(v -> {
-            Intent intent = new Intent(FolderActivity.this, SelectiveSyncActivity.class);
-            intent.putExtra(SelectiveSyncActivity.EXTRA_FOLDER_ID, mFolder.id);
-            startActivity(intent);
-        });
+        // 选择性同步：
+        //   新建模式 -> 开关，保存时决定"全部同步"还是"只同步勾选内容"
+        //   编辑模式 -> 入口按钮，打开目录树勾选
+        mSelectiveSyncButton = findViewById(R.id.selectiveSyncButton);
+        mSelectiveSyncSwitch = findViewById(R.id.selectiveSyncSwitch);
+        mSelectiveSyncSwitch.setVisibility(mIsCreateMode ? View.VISIBLE : View.GONE);
+        mSelectiveSyncButton.setVisibility(mIsCreateMode ? View.GONE : View.VISIBLE);
+        mSelectiveSyncButton.setOnClickListener(v -> openSelectiveSync());
 
         folderTypeContainer.setEnabled(!mFolder.type.equals(Constants.FOLDER_TYPE_RECEIVE_ENCRYPTED));
         checkWriteAndUpdateUI();
@@ -878,6 +883,38 @@ public class FolderActivity extends SyncthingActivity {
         encryptPassView.addTextChangedListener(mTextWatcher);
     }
 
+    /** 打开选择性同步界面。 */
+    private void openSelectiveSync() {
+        Intent intent = new Intent(FolderActivity.this, SelectiveSyncActivity.class);
+        intent.putExtra(SelectiveSyncActivity.EXTRA_FOLDER_ID, mFolder.id);
+        startActivity(intent);
+    }
+
+    /**
+     * 新建文件夹且开启了选择性同步时调用。
+     *
+     * <p>先暂停并写入"忽略全部"的托管块，保证用户选完之前不会下载任何文件；
+     * 随后立刻恢复运行 —— 只有保持运行，本机才能收到远端索引，
+     * 选择性同步的目录树才有内容可选（这也是不能只靠"暂停"来实现的原因）。
+     */
+    private void prepareSelectiveSyncBeforeFirstSync() {
+        try {
+            mFolder.paused = true;
+            mConfig.updateFolder(getApi(), mFolder);
+
+            SelectiveSyncPatterns.Result result = SelectiveSyncPatterns.buildStignore(
+                    "", new ArrayList<String>(), new HashSet<String>());
+            mConfig.postFolderIgnoreList(getApi(), mFolder, result.text.split("\n"));
+
+            mFolder.paused = false;
+            mConfig.updateFolder(getApi(), mFolder);
+        } catch (Exception e) {
+            Log.w(TAG, "初始化选择性同步失败，回退为普通同步", e);
+            mFolder.paused = false;
+            mConfig.updateFolder(getApi(), mFolder);
+        }
+    }
+
     private void onSave() {
         if (mFolder == null) {
             Log.e(TAG, "onSave: mFolder == null");
@@ -915,9 +952,14 @@ public class FolderActivity extends SyncthingActivity {
             Log.v(TAG, "onSave: Adding folder with ID = '" + mFolder.id + "'");
             Handler mainHandler = new Handler(Looper.getMainLooper());
             final ExecutorService executor = Executors.newSingleThreadExecutor();
+            final boolean useSelectiveSync = mSelectiveSyncSwitch != null
+                    && mSelectiveSyncSwitch.isChecked();
             executor.execute(() -> {
                 preCreateFolderStruct(mFolderUri, mFolder.path);
                 mConfig.addFolder(getApi(), mFolder);
+                if (useSelectiveSync) {
+                    prepareSelectiveSyncBeforeFirstSync();
+                }
 
                 mainHandler.post(() -> {
                     // Start sync after adding a folder.
@@ -928,6 +970,10 @@ public class FolderActivity extends SyncthingActivity {
 
                     setSavingState(false);
                     setResult(AppCompatActivity.RESULT_OK);
+                    if (useSelectiveSync) {
+                        // 让用户立刻挑选内容，此时还没有任何文件被下载。
+                        openSelectiveSync();
+                    }
                     finish();
                 });
             });

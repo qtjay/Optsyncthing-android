@@ -421,6 +421,15 @@
                         android:layout_marginStart="55dp"
                         android:text="@string/selective_sync_open" />
 
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/selectiveSyncSwitch"
+                        style="@style/Widget.Syncthing.TextView.Label.Details"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="55dp"
+                        android:checked="false"
+                        android:text="@string/selective_sync_open" />
+
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

@@ -1167,4 +1167,15 @@
     <string name="selective_sync_waiting">Waiting for Syncthing to start…</string>
     <string name="selective_sync_saved">Saved, rescanning folder.</string>
     <string name="selective_sync_folder_not_found">Folder not found.</string>
+    <string name="selective_sync_from_cache">Showing cached folder structure, refreshing…</string>
+    <string name="selective_sync_offline_no_delete">Syncthing is unavailable, local files are kept for safety.</string>
+    <string name="selective_sync_removal_title">Remove unselected content?</string>
+    <string name="selective_sync_safe_to_delete">Still available on another device, safe to remove locally:</string>
+    <string name="selective_sync_risky_header">Not found on any other device — removing it is risky:</string>
+    <string name="selective_sync_remote_missing">no copy on other devices</string>
+    <string name="selective_sync_dir_manual">folder, verify manually before removing</string>
+    <string name="selective_sync_keep_files">Keep files</string>
+    <string name="selective_sync_delete_safe">Remove safe ones</string>
+    <string name="selective_sync_delete_all">Remove all</string>
+    <string name="selective_sync_deleted_count">Removed %1$d of %2$d item(s).</string>
 </resources>
