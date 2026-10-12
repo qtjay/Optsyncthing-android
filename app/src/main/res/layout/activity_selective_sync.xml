@@ -34,6 +34,13 @@
                 android:textAppearance="@style/TextAppearance.AppCompat.Caption" />
 
             <TextView
+                android:id="@+id/new_files_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/selective_sync_new_files_hint"
+                android:textAppearance="@style/TextAppearance.AppCompat.Caption" />
+
+            <TextView
                 android:id="@+id/current_path"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

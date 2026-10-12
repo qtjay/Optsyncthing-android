@@ -140,7 +140,9 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             }
             if (row.expanded) {
                 row.expanded = false;
+                // 折叠后清空子项，下次展开重新加载
                 removeChildrenOf(position, row.depth);
+                row.childrenLoaded = false;
                 mAdapter.notifyDataSetChanged();
             } else {
                 row.expanded = true;
@@ -170,6 +172,10 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             mPathView.setText(enabled
                     ? R.string.selective_sync_summary
                     : R.string.selective_sync_disabled_hint);
+        }
+        View hint = findViewById(R.id.new_files_hint);
+        if (hint != null) {
+            hint.setVisibility(enabled ? View.VISIBLE : View.GONE);
         }
     }
 
@@ -231,12 +237,30 @@ public class SelectiveSyncActivity extends SyncthingActivity {
                 return;
             }
             mCache.putLevel(mFolder.id, prefix, entries);
+            // browse 常会连带返回嵌套子项，一并缓存：展开时无需再发请求，离线也能展开
+            cacheNested(mFolder.id, prefix, entries);
             mCache.save();
             applyChildren(parentIndex, parentRow, entries, false);
             if (parentRow != null) {
                 parentRow.childrenLoaded = true;
             }
         });
+    }
+
+    private void cacheNested(String folderId, String parentPrefix, List<BrowseEntry> entries) {
+        if (entries == null) {
+            return;
+        }
+        for (BrowseEntry entry : entries) {
+            if (entry == null || entry.name == null
+                    || entry.children == null || entry.children.isEmpty()) {
+                continue;
+            }
+            String path = parentPrefix.isEmpty()
+                    ? entry.name : parentPrefix + "/" + entry.name;
+            mCache.putLevel(folderId, path, entry.children);
+            cacheNested(folderId, path, entry.children);
+        }
     }
 
     private List<BrowseEntry> convertCached(SelectiveSyncTreeCache.Level level) {
@@ -422,46 +446,64 @@ public class SelectiveSyncActivity extends SyncthingActivity {
                 if (entry != null && entry.hasRemoteCopy(localDeviceId)) {
                     safeToDelete.add(path);
                 } else {
-                    risky.add(path + "  " + getString(R.string.selective_sync_remote_missing));
+                    // 只存原始路径，提示文案在展示时拼接，避免污染后续删除/恢复操作
+                    risky.add(path);
                 }
                 if (--remaining[0] == 0) {
-                    showRemovalDialog(safeToDelete, risky);
+                    finishAvailabilityCheck(safeToDelete, risky);
                 }
             });
         }
     }
 
-    private void showRemovalDialog(final List<String> safeToDelete, final List<String> risky) {
+    /** 远端有副本 -> 直接删除；远端无副本 -> 提示，由用户选择保持勾选或强制删除。 */
+    private void finishAvailabilityCheck(final List<String> safeToDelete,
+                                         final List<String> risky) {
+        if (risky.isEmpty()) {
+            commitSelection(true, safeToDelete);
+            return;
+        }
         StringBuilder message = new StringBuilder();
+        message.append(getString(R.string.selective_sync_risky_header)).append("\n");
+        for (String path : risky) {
+            message.append("  - ").append(path)
+                    .append("  ").append(getString(R.string.selective_sync_remote_missing))
+                    .append('\n');
+        }
         if (!safeToDelete.isEmpty()) {
-            message.append(getString(R.string.selective_sync_safe_to_delete)).append("\n");
+            message.append('\n').append(getString(R.string.selective_sync_safe_to_delete))
+                    .append("\n");
             for (String path : safeToDelete) {
                 message.append("  - ").append(path).append('\n');
             }
         }
-        if (!risky.isEmpty()) {
-            message.append('\n').append(getString(R.string.selective_sync_risky_header)).append("\n");
-            for (String path : risky) {
-                message.append("  - ").append(path).append('\n');
-            }
-        }
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this)
                 .setTitle(R.string.selective_sync_removal_title)
                 .setMessage(message.toString())
-                .setNegativeButton(R.string.selective_sync_keep_files,
-                        (dialog, which) -> commitSelection(true, null));
-        if (!safeToDelete.isEmpty()) {
-            builder.setPositiveButton(R.string.selective_sync_delete_safe,
-                    (dialog, which) -> commitSelection(true, safeToDelete));
+                .setNegativeButton(R.string.selective_sync_keep_selected,
+                        (dialog, which) -> {
+                            // 保持勾选：把这些路径放回去，规则里仍包含它们
+                            restoreSelection(risky);
+                            commitSelection(true, safeToDelete);
+                        })
+                .setPositiveButton(R.string.selective_sync_force_delete, (dialog, which) -> {
+                    List<String> all = new ArrayList<>(safeToDelete);
+                    all.addAll(risky);
+                    commitSelection(true, all);
+                })
+                .show();
+    }
+
+    /** 恢复勾选（用户选择"保持勾选"时）。 */
+    private void restoreSelection(List<String> paths) {
+        for (String path : paths) {
+            if (mInitialDirs.contains(path)) {
+                mSelectedDirs.add(path);
+            } else {
+                mSelectedFiles.add(path);
+            }
         }
-        if (!risky.isEmpty()) {
-            builder.setNeutralButton(R.string.selective_sync_delete_all, (dialog, which) -> {
-                List<String> all = new ArrayList<>(safeToDelete);
-                all.addAll(risky);
-                commitSelection(true, all);
-            });
-        }
-        builder.show();
+        mAdapter.notifyDataSetChanged();
     }
 
     private void commitSelection(final boolean enabled, final List<String> pathsToDelete) {

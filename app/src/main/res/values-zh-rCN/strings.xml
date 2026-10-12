@@ -794,10 +794,9 @@
     <string name="selective_sync_safe_to_delete">其它设备上仍有副本，删除本地副本是安全的：</string>
     <string name="selective_sync_risky_header">其它设备上不存在，删除有风险：</string>
     <string name="selective_sync_remote_missing">远端无副本</string>
-    <string name="selective_sync_dir_manual">目录，删除前请自行确认</string>
-    <string name="selective_sync_keep_files">保留文件</string>
-    <string name="selective_sync_delete_safe">只删安全项</string>
-    <string name="selective_sync_delete_all">全部删除</string>
+    <string name="selective_sync_keep_selected">保持勾选</string>
+    <string name="selective_sync_force_delete">仍然删除</string>
+    <string name="selective_sync_new_files_hint">已勾选目录里后续新增的文件会自动同步。</string>
     <string name="selective_sync_deleted_count">已删除 %1$d / %2$d 项。</string>
     <string name="selective_sync_deleting">正在应用忽略规则，随后删除本地文件…</string>
     <string name="selective_sync_enable">选择性同步</string>

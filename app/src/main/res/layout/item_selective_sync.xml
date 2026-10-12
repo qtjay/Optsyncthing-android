@@ -20,10 +20,12 @@
         android:gravity="center"
         android:textAppearance="@style/TextAppearance.AppCompat.Body1" />
 
+    <!-- focusable=false：否则 CheckBox 会吃掉整行的点击事件，导致目录无法展开 -->
     <CheckBox
         android:id="@+id/checkbox"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content" />
+        android:layout_height="wrap_content"
+        android:focusable="false" />
 
     <LinearLayout
         android:layout_width="0dp"
