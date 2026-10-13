@@ -799,6 +799,7 @@
     <string name="selective_sync_new_files_hint">已勾选目录里后续新增的文件会自动同步。</string>
     <string name="selective_sync_deleted_count">已删除 %1$d / %2$d 项。</string>
     <string name="selective_sync_deleting">正在应用忽略规则，随后删除本地文件…</string>
+    <string name="selective_sync_delete_failed">以下项目删除失败（被占用或没有写入权限）：\n%1$s</string>
     <string name="selective_sync_enable">选择性同步</string>
     <string name="selective_sync_switch_hint">关闭即恢复为全部同步，已做的选择会保留。</string>
     <string name="selective_sync_disabled_hint">选择性同步已关闭：整个文件夹都会被同步。打开开关即可重新挑选内容。</string>

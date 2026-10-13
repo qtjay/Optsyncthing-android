@@ -33,6 +33,8 @@ import com.nutomic.syncthingandroid.views.IndeterminateCheckBox;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -70,6 +72,13 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     private static final int MAX_CACHE_DEPTH = 6;
 
     private static final int MAX_CACHE_ENTRIES = 5000;
+
+    /** Syncthing 内部条目，内核硬编码忽略，不展示。 */
+    private static final Set<String> INTERNAL_ENTRIES =
+            new LinkedHashSet<>(Arrays.asList(".stignore", ".stfolder", ".stversions"));
+
+    /** 查询远端副本状态的超时，避免个别请求无回调时一直卡住。 */
+    private static final long AVAILABILITY_TIMEOUT_MS = 15000L;
 
     private ConfigRouter mConfig;
     private SelectiveSyncStore mStore;
@@ -319,6 +328,11 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             if (entry == null || entry.name == null) {
                 continue;
             }
+            // Syncthing 的内部条目由内核硬编码忽略，用 ! 也放行不了，
+            // 列出来只会让人以为可以勾选，直接隐藏。
+            if (INTERNAL_ENTRIES.contains(entry.name)) {
+                continue;
+            }
             TreeRow row = new TreeRow();
             row.name = entry.name;
             row.dir = entry.isDirectory();
@@ -528,16 +542,38 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         final List<String> safeToDelete = new ArrayList<>();
         final List<String> risky = new ArrayList<>();
         final String localDeviceId = restApi.getLocalDeviceId();
-        final int[] remaining = {removed.size()};
+        final Set<String> pending = new LinkedHashSet<>(removed);
+        final boolean[] done = {false};
+
+        // 超时兜底：个别请求若始终没有回调，界面会一直等在这里。
+        // 未拿到结果的一律按"远端状态未知"处理（不删除），保证安全。
+        final Runnable timeout = () -> {
+            if (done[0]) {
+                return;
+            }
+            done[0] = true;
+            Log.w(TAG, "查询远端副本状态超时，未返回的路径按有风险处理");
+            risky.addAll(pending);
+            pending.clear();
+            finishAvailabilityCheck(safeToDelete, risky);
+        };
+        mHandler.postDelayed(timeout, AVAILABILITY_TIMEOUT_MS);
+
         for (String path : removed) {
             restApi.getFolderFile(mFolder.id, path, entry -> {
+                if (done[0]) {
+                    return;
+                }
+                pending.remove(path);
+                // 只存原始路径，提示文案在展示时拼接，避免污染后续删除/恢复操作
                 if (entry != null && entry.hasRemoteCopy(localDeviceId)) {
                     safeToDelete.add(path);
                 } else {
-                    // 只存原始路径，提示文案在展示时拼接，避免污染后续删除/恢复操作
                     risky.add(path);
                 }
-                if (--remaining[0] == 0) {
+                if (pending.isEmpty()) {
+                    done[0] = true;
+                    mHandler.removeCallbacks(timeout);
                     finishAvailabilityCheck(safeToDelete, risky);
                 }
             });
@@ -636,18 +672,19 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             executor.execute(() -> {
                 // 等忽略规则生效后再删，避免 Syncthing 把删除当作本地真实删除传播到远端
                 waitForFolderIdle(restApi, 20000L);
-                int deleted = 0;
-                for (String path : pathsToDelete) {
-                    if (deleteRecursively(new File(mFolder.path, path))) {
-                        deleted++;
-                    }
-                }
-                final int finalDeleted = deleted;
+                final List<String> failed = deletePaths(pathsToDelete);
+                final int finalDeleted = pathsToDelete.size() - failed.size();
                 mainHandler.post(() -> {
                     Toast.makeText(SelectiveSyncActivity.this,
                             getString(R.string.selective_sync_deleted_count,
                                     finalDeleted, pathsToDelete.size()),
                             Toast.LENGTH_SHORT).show();
+                    if (!failed.isEmpty()) {
+                        Toast.makeText(SelectiveSyncActivity.this,
+                                getString(R.string.selective_sync_delete_failed,
+                                        TextUtils.join("\n", failed)),
+                                Toast.LENGTH_LONG).show();
+                    }
                     Toast.makeText(SelectiveSyncActivity.this, R.string.selective_sync_saved,
                             Toast.LENGTH_SHORT).show();
                     setResult(RESULT_OK);
@@ -672,6 +709,38 @@ public class SelectiveSyncActivity extends SyncthingActivity {
                 return;
             }
         }
+    }
+
+    /**
+     * 删除指定路径，返回仍然删除失败的路径。
+     *
+     * <p>先删父目录（路径短的在前），子项会随之消失，既避免重复操作，
+     * 也不会把"已被父目录带走"误报成失败。
+     */
+    private List<String> deletePaths(List<String> paths) {
+        List<String> sorted = new ArrayList<>(paths);
+        Collections.sort(sorted, Comparator.comparingInt(String::length));
+        List<String> failed = new ArrayList<>();
+        for (String path : sorted) {
+            File file = new File(mFolder.path, path);
+            if (!file.exists()) {
+                continue;
+            }
+            boolean ok = deleteRecursively(file);
+            if (!ok && file.exists()) {
+                // 文件可能正被 Syncthing 占用，稍等后重试一次
+                try {
+                    Thread.sleep(300L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                ok = deleteRecursively(file);
+            }
+            if (!ok && file.exists()) {
+                failed.add(path);
+            }
+        }
+        return failed;
     }
 
     private boolean deleteRecursively(File file) {
