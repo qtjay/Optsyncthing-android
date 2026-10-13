@@ -719,7 +719,13 @@ public class SelectiveSyncActivity extends SyncthingActivity {
      */
     private List<String> deletePaths(List<String> paths) {
         List<String> sorted = new ArrayList<>(paths);
-        Collections.sort(sorted, Comparator.comparingInt(String::length));
+        // 不用 Comparator.comparingInt：那需要 API 24，而 minSdk 是 23，Lint 会判为错误
+        Collections.sort(sorted, new Comparator<String>() {
+            @Override
+            public int compare(String a, String b) {
+                return a.length() - b.length();
+            }
+        });
         List<String> failed = new ArrayList<>();
         for (String path : sorted) {
             File file = new File(mFolder.path, path);
