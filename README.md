@@ -11,6 +11,52 @@
 
 A wrapper of [Syncthing](https://github.com/syncthing/syncthing) for Android. Head to the "releases" section or F-Droid for builds. Please seek help on the forum and/or social media apps first before creating issues on the tracker.
 
+---
+
+## 关于本分支：选择性同步（Selective Sync）
+
+本分支是 [researchxxl/syncthing-android](https://github.com/researchxxl/syncthing-android) 的个人 fork，
+核心目标是给 Android 客户端补上**选择性同步**能力——只同步你手动勾选的文件夹或文件。
+手机存储空间有限时，不必再为了用其中一个文件夹而同步整个共享文件夹。
+
+### 功能特点
+
+- **只同步勾选的内容**：以可展开的目录树浏览远端文件结构，**任意层级**的文件夹或单个文件都能勾选。
+- **随时切换同步方式**：顶部开关可在「选择性同步」与「全部同步」之间自由切换，已做的选择会保留。
+- **父目录状态联动**：勾选或取消父目录时，子目录会跟随一起变化，状态不会打架。
+- **部分选中一目了然**：子目录只有一部分被勾选时，父目录显示「－」标记。
+- **取消勾选带安全检查**：会先查远端是否仍持有该文件
+  - 远端有副本 → 直接删除本地文件；
+  - 远端无副本 → 明确提示「删除有风险」，可选**保持勾选**或**强制删除**，不会误删唯一副本。
+- **新增文件自动同步**：已勾选目录里后续新增的文件会自动纳入同步（含未来的文件）。
+- **目录结构本机缓存**：离线也能看到目录树，打开时自动刷新保持最新。
+- **可与官方版共存**：独立包名 `com.qtjay.syncthingfork.opt`，无需卸载官方版本。
+- **不改动 Go 内核**：完全在 wrapper（Java）层基于 `.stignore` 实现。
+
+### 实现方式与验证
+
+- 规则生成经过了 **syncthing v2.1.6 双节点端到端真值校验**：真实启动一个源节点和一个目标节点，
+  比对目标节点磁盘上**实际落盘的文件集合**与预期是否一致，而不是靠模拟推断。
+- 校验过程中修正了两处只有在真实内核下才会暴露的缺陷：
+  1. 单条全局兜底（`*` 或 `**`）**拦不住**被 `!` 放行目录下的深层路径；
+  2. 「忽略其余子项」的规则必须排在「放行该目录」**之前**，否则对子项完全失效。
+- 已知限制：忽略规则对收发双向生效，未勾选的内容本机既不会下载也不会上传。
+
+### 作者与致谢
+
+- **发起者与真正作者**：[qtjay](https://github.com/qtjay) —— 需求定义、交互设计、
+  真机验证与每一轮缺陷反馈，本分支的方向与质量由他决定。
+- **代码实现**：选择性同步功能的代码由 AI 助手 **WorkBuddy** 在 qtjay 的指导下编写完成；
+  所有关键行为均以真实内核校验为准，而非仅凭推断。
+- **诚挚感谢原作者与上游**：本分支的一切都建立在
+  [researchxxl](https://github.com/researchxxl) 及历任维护者
+  [Catfriend1](https://github.com/Catfriend1)、[imsodin](https://github.com/imsodin)、
+  [nutomic](https://github.com/nutomic) 的长期贡献之上，
+  同样感谢 [syncthing/syncthing](https://github.com/syncthing/syncthing) 官方项目。
+  没有他们的工作，就不会有这个分支。
+
+---
+
 <img src="app/src/main/play/listings/en-US/graphics/phone-screenshots/1.png" alt="screenshot 1" width="200" /> · <img src="app/src/main/play/listings/en-US/graphics/phone-screenshots/2.png" alt="screenshot 2" width="200" /> · <img src="app/src/main/play/listings/en-US/graphics/phone-screenshots/4.png" alt="screenshot 3" width="200" />
 
 ## Switching from the deprecated official version
