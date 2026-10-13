@@ -33,6 +33,7 @@ import com.nutomic.syncthingandroid.views.IndeterminateCheckBox;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +63,14 @@ public class SelectiveSyncActivity extends SyncthingActivity {
 
     private static final long REFRESH_INTERVAL_MS = 8000L;
 
+    /** 自动刷新目录树的最小间隔，避免远端频繁变化时反复重建整棵树。 */
+    private static final long MIN_AUTO_REFRESH_INTERVAL_MS = 30000L;
+
+    /** 缓存嵌套子项的深度/条目上限，防止超大目录拖垮界面。 */
+    private static final int MAX_CACHE_DEPTH = 6;
+
+    private static final int MAX_CACHE_ENTRIES = 5000;
+
     private ConfigRouter mConfig;
     private SelectiveSyncStore mStore;
     private SelectiveSyncTreeCache mCache;
@@ -79,6 +88,9 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     private TextView mWarningsView;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private long mLastKnownItems = -1L;
+    private long mLastAutoRefreshMs = 0L;
+    private final ExecutorService mCacheExecutor = Executors.newSingleThreadExecutor();
+    private int mCachedEntries = 0;
 
     private final Runnable mRefreshRunnable = new Runnable() {
         @Override
@@ -95,6 +107,10 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         int depth;
         boolean expanded;
         boolean childrenLoaded;
+        /** 预先算好的显示状态，避免 getView 里重复遍历选择集造成卡顿。 */
+        boolean selected;
+        boolean covered;
+        boolean partial;
     }
 
     @Override
@@ -193,6 +209,12 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     }
 
     @Override
+    public void onDestroy() {
+        mCacheExecutor.shutdownNow();
+        super.onDestroy();
+    }
+
+    @Override
     public void onServiceConnected(android.content.ComponentName componentName,
                                    android.os.IBinder iBinder) {
         super.onServiceConnected(componentName, iBinder);
@@ -237,22 +259,31 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             if (entries == null || entries.isEmpty()) {
                 return;
             }
-            mCache.putLevel(mFolder.id, prefix, entries);
-            // browse 常会连带返回嵌套子项，一并缓存：展开时无需再发请求，离线也能展开
-            cacheNested(mFolder.id, prefix, entries);
-            mCache.save();
             applyChildren(parentIndex, parentRow, entries, false);
             if (parentRow != null) {
                 parentRow.childrenLoaded = true;
             }
+            // 缓存写入放后台：目录很大时，递归遍历 + Gson 序列化会卡住主线程导致 ANR。
+            final List<BrowseEntry> snapshot = new ArrayList<>(entries);
+            mCacheExecutor.execute(() -> {
+                mCachedEntries = 0;
+                mCache.putLevel(mFolder.id, prefix, snapshot);
+                // browse 常会连带返回嵌套子项，一并缓存：展开时无需再发请求，离线也能展开
+                cacheNested(mFolder.id, prefix, snapshot, 0);
+                mCache.save();
+            });
         });
     }
 
-    private void cacheNested(String folderId, String parentPrefix, List<BrowseEntry> entries) {
-        if (entries == null) {
+    private void cacheNested(String folderId, String parentPrefix,
+                             List<BrowseEntry> entries, int depth) {
+        if (entries == null || depth > MAX_CACHE_DEPTH) {
             return;
         }
         for (BrowseEntry entry : entries) {
+            if (mCachedEntries >= MAX_CACHE_ENTRIES) {
+                return;
+            }
             if (entry == null || entry.name == null
                     || entry.children == null || entry.children.isEmpty()) {
                 continue;
@@ -260,7 +291,8 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             String path = parentPrefix.isEmpty()
                     ? entry.name : parentPrefix + "/" + entry.name;
             mCache.putLevel(folderId, path, entry.children);
-            cacheNested(folderId, path, entry.children);
+            mCachedEntries += entry.children.size();
+            cacheNested(folderId, path, entry.children, depth + 1);
         }
     }
 
@@ -301,6 +333,7 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             return nullSafe(a.name).compareToIgnoreCase(nullSafe(b.name));
         });
         mRows.addAll(parentIndex + 1, rows);
+        recomputeStates();
         mAdapter.notifyDataSetChanged();
         if (fromCache && parentRow == null) {
             Toast.makeText(this, R.string.selective_sync_from_cache, Toast.LENGTH_SHORT).show();
@@ -325,8 +358,11 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             return;
         }
         long items = status.globalFiles + status.globalDirectories;
-        if (mLastKnownItems != -1L && items != mLastKnownItems) {
+        long now = System.currentTimeMillis();
+        if (mLastKnownItems != -1L && items != mLastKnownItems
+                && now - mLastAutoRefreshMs > MIN_AUTO_REFRESH_INTERVAL_MS) {
             Log.d(TAG, "远端条目数变化 (" + mLastKnownItems + " -> " + items + ")，刷新目录树");
+            mLastAutoRefreshMs = now;
             mCache.clearFolder(mFolder.id);
             loadChildren(-1, null);
         }
@@ -347,8 +383,12 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         if (row.dir) {
             if (checked) {
                 mSelectedDirs.add(row.path);
+                // 父目录选中 -> 整棵子树随之选中，清掉子项上的独立状态避免混淆
+                clearDescendants(row.path);
             } else {
                 mSelectedDirs.remove(row.path);
+                // 父目录取消 -> 子项一起取消
+                clearDescendants(row.path);
             }
         } else {
             if (checked) {
@@ -356,6 +396,37 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             } else {
                 mSelectedFiles.remove(row.path);
             }
+        }
+        recomputeStates();
+    }
+
+    /** 清除该目录下所有后代的独立选择状态。 */
+    private void clearDescendants(String dirPath) {
+        String prefix = dirPath + "/";
+        Iterator<String> dirs = mSelectedDirs.iterator();
+        while (dirs.hasNext()) {
+            if (dirs.next().startsWith(prefix)) {
+                dirs.remove();
+            }
+        }
+        Iterator<String> files = mSelectedFiles.iterator();
+        while (files.hasNext()) {
+            if (files.next().startsWith(prefix)) {
+                files.remove();
+            }
+        }
+    }
+
+    /** 统一计算各行的显示状态，供 getView 直接读取。 */
+    private void recomputeStates() {
+        for (TreeRow row : mRows) {
+            boolean selected = row.dir
+                    ? mSelectedDirs.contains(row.path)
+                    : mSelectedFiles.contains(row.path);
+            row.selected = selected;
+            row.covered = !selected && isCoveredByParent(row);
+            row.partial = row.dir && !selected && !row.covered
+                    && hasSelectedDescendant(row.path);
         }
     }
 
@@ -520,6 +591,7 @@ public class SelectiveSyncActivity extends SyncthingActivity {
                 mSelectedFiles.add(path);
             }
         }
+        recomputeStates();
         mAdapter.notifyDataSetChanged();
     }
 
@@ -677,21 +749,15 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             holder.expander.setText(row.dir ? (row.expanded ? "-" : "+") : "");
             holder.name.setText(row.name);
 
-            boolean selected = isSelected(row);
-            boolean covered = !selected && isCoveredByParent(row);
-            // 目录自身未选中、也不被父目录覆盖，但子项里有被选中的 -> 部分选中
-            boolean partial = row.dir && !selected && !covered
-                    && hasSelectedDescendant(row.path);
-
             holder.checkBox.setOnCheckedChangeListener(null);
-            holder.checkBox.setIndeterminate(partial);
-            holder.checkBox.setChecked(selected);
+            holder.checkBox.setIndeterminate(row.partial);
+            holder.checkBox.setChecked(row.selected);
             holder.checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
                 toggle(row, isChecked);
                 notifyDataSetChanged();
             });
 
-            if (covered) {
+            if (row.covered) {
                 holder.hint.setVisibility(View.VISIBLE);
             } else {
                 holder.hint.setVisibility(View.GONE);

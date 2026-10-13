@@ -54,15 +54,22 @@ jobs:
           path: ${{ runner.temp }}/keystore/fork-release.jks
           key: fork-release-signing-keystore-v1
 
-      - name: Create keystore if missing
+      - name: Restore signing keystore
+        env:
+          KS_B64: ${{ secrets.FORK_SIGNING_KEYSTORE }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/keystore"
-          if [ -s "$RUNNER_TEMP/keystore/fork-release.jks" ]; then
-            echo "复用缓存的签名密钥 -> 各版本签名一致，可直接覆盖安装"
+          KS="$RUNNER_TEMP/keystore/fork-release.jks"
+          if [ -n "$KS_B64" ]; then
+            # 优先用仓库 Secret 里的固定密钥：永久有效，不受缓存过期影响
+            printf '%s' "$KS_B64" | base64 -d > "$KS"
+            echo "使用仓库 Secret 中的固定签名密钥"
+          elif [ -s "$KS" ]; then
+            echo "复用缓存的签名密钥"
           else
             echo "缓存中没有密钥，生成新的（本次构建结束时会写入缓存供后续复用）"
-            keytool -genkeypair -keystore "$RUNNER_TEMP/keystore/fork-release.jks" \
+            keytool -genkeypair -keystore "$KS" \
               -alias fork -keyalg RSA -keysize 2048 -validity 10950 \
               -storepass android -keypass android \
               -dname "CN=Syncthing-Fork CI" -noprompt
