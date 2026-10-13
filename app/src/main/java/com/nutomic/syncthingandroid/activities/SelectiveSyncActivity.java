@@ -28,6 +28,7 @@ import com.nutomic.syncthingandroid.util.ConfigRouter;
 import com.nutomic.syncthingandroid.util.SelectiveSyncPatterns;
 import com.nutomic.syncthingandroid.util.SelectiveSyncStore;
 import com.nutomic.syncthingandroid.util.SelectiveSyncTreeCache;
+import com.nutomic.syncthingandroid.views.IndeterminateCheckBox;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -372,6 +373,22 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         return false;
     }
 
+    /** 该目录下是否存在被选中的后代（用于显示"部分选中"）。 */
+    private boolean hasSelectedDescendant(String dirPath) {
+        String prefix = dirPath + "/";
+        for (String dir : mSelectedDirs) {
+            if (dir.startsWith(prefix)) {
+                return true;
+            }
+        }
+        for (String file : mSelectedFiles) {
+            if (file.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<String> effectiveSelection() {
         List<String> result = new ArrayList<>();
         for (String dir : mSelectedDirs) {
@@ -661,14 +678,20 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             holder.name.setText(row.name);
 
             boolean selected = isSelected(row);
+            boolean covered = !selected && isCoveredByParent(row);
+            // 目录自身未选中、也不被父目录覆盖，但子项里有被选中的 -> 部分选中
+            boolean partial = row.dir && !selected && !covered
+                    && hasSelectedDescendant(row.path);
+
             holder.checkBox.setOnCheckedChangeListener(null);
+            holder.checkBox.setIndeterminate(partial);
             holder.checkBox.setChecked(selected);
             holder.checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
                 toggle(row, isChecked);
                 notifyDataSetChanged();
             });
 
-            if (!selected && isCoveredByParent(row)) {
+            if (covered) {
                 holder.hint.setVisibility(View.VISIBLE);
             } else {
                 holder.hint.setVisibility(View.GONE);
@@ -680,7 +703,7 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     private static class ViewHolder {
         TextView indent;
         TextView expander;
-        CheckBox checkBox;
+        IndeterminateCheckBox checkBox;
         TextView name;
         TextView hint;
     }
