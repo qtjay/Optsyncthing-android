@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.navigation3.runtime.EntryProviderScope
+import com.nutomic.syncthingandroid.BuildConfig
 import com.nutomic.syncthingandroid.R
 import com.nutomic.syncthingandroid.service.Constants
 import com.nutomic.syncthingandroid.util.Util
@@ -69,7 +70,10 @@ fun SettingsAboutScreen() {
             Preference(
                 title = { Text(stringResource(R.string.branch_version_title)) },
                 summary = {
-                    Text("${stringResource(R.string.branch_name)} ${state.appVersion}")
+                    // BRANCH_BUILD 由 gradle 从 git 标签注入；取不到时退回应用版本
+                    val build = BuildConfig.BRANCH_BUILD
+                    val version = if (build.isBlank()) state.appVersion else build
+                    Text("${stringResource(R.string.branch_name)} $version")
                 },
             )
         }
