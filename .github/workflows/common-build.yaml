@@ -187,7 +187,10 @@ jobs:
           set -eu
           unset ANDROID_NDK_HOME
           git config --global --add safe.directory '*'
-          ./gradlew --no-daemon buildNative lint${{ inputs.buildType }} assemble${{ inputs.buildType }} ${{ inputs.gradleOptions }}
+          # 构建号在 shell 里取：Gradle 配置缓存不允许在配置阶段启动外部进程
+          BRANCH_BUILD="$(git describe --tags --always 2>/dev/null || true)"
+          echo "BRANCH_BUILD=${BRANCH_BUILD}"
+          ./gradlew --no-daemon buildNative lint${{ inputs.buildType }} assemble${{ inputs.buildType }} -PbranchBuild="${BRANCH_BUILD}" ${{ inputs.gradleOptions }}
 
       - name: Save prebuilt native libraries to cache
         run: |

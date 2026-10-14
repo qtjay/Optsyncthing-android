@@ -42,23 +42,6 @@ dependencies {
     ksp(libs.dagger.compiler)
 }
 
-/**
- * 从 git 标签取构建号（形如 v2.1.7.0-opt.10）。
- * 取不到时返回空串 —— 不能让「缺少 git / 没有标签」变成构建失败的原因。
- */
-fun branchBuildTag(): String {
-    return try {
-        val process = ProcessBuilder("git", "describe", "--tags", "--always")
-            .directory(rootDir)
-            .redirectErrorStream(true)
-            .start()
-        val output = process.inputStream.bufferedReader().readText().trim()
-        if (process.waitFor() == 0) output else ""
-    } catch (e: Exception) {
-        ""
-    }
-}
-
 android {
     compileSdk = libs.versions.compile.sdk.get().toInt()
     namespace = "com.nutomic.syncthingandroid"
@@ -82,8 +65,14 @@ android {
         targetSdk = libs.versions.target.sdk.get().toInt()
         versionCode = libs.versions.version.code.get().toInt()
         versionName = libs.versions.version.name.get()
-        // 构建号（如 v2.1.7.0-opt.10），供「关于」页面显示
-        buildConfigField("String", "BRANCH_BUILD", "\"${branchBuildTag()}\"")
+        // 构建号（如 v2.1.7.0-opt.11），由 CI 通过 -PbranchBuild=... 传入。
+        // 注意：这里不能调用 git —— Gradle 配置缓存禁止在配置阶段启动外部进程，
+        // 会让构建直接失败。只在配置阶段读取属性，取不到时为空串。
+        buildConfigField(
+            "String",
+            "BRANCH_BUILD",
+            "\"${(project.findProperty("branchBuild") as? String) ?: ""}\""
+        )
     }
 
     signingConfigs {
