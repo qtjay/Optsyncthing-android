@@ -67,6 +67,14 @@ fun SettingsAboutScreen() {
         }
         item {
             Preference(
+                title = { Text(stringResource(R.string.branch_version_title)) },
+                summary = {
+                    Text("${stringResource(R.string.branch_name)} ${state.appVersion}")
+                },
+            )
+        }
+        item {
+            Preference(
                 title = { Text(stringResource(R.string.syncthing_version_title)) },
                 summary = { Text(state.coreVersion) },
             )
