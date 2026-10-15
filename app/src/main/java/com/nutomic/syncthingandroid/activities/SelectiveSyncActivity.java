@@ -6,6 +6,8 @@ import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
@@ -36,6 +38,7 @@ import java.util.Collections;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -73,9 +76,11 @@ public class SelectiveSyncActivity extends SyncthingActivity {
 
     private static final int MAX_CACHE_ENTRIES = 5000;
 
-    /** Syncthing 内部条目，内核硬编码忽略，不展示。 */
+    /** Syncthing 内部条目，内核硬编码忽略，不展示。清理时也绝不能删。 */
     private static final Set<String> INTERNAL_ENTRIES =
             new LinkedHashSet<>(Arrays.asList(".stignore", ".stfolder", ".stversions"));
+
+    private static final int MENU_CLEANUP = 1;
 
     /** 查询远端副本状态的超时，避免个别请求无回调时一直卡住。 */
     private static final long AVAILABILITY_TIMEOUT_MS = 15000L;
@@ -86,9 +91,21 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     private Folder mFolder;
 
     private final List<TreeRow> mRows = new ArrayList<>();
+    /**
+     * 勾选状态分三桶保存 —— 对应 .stignore 里的两种放行写法：
+     * <ul>
+     *   <li>{@link #mSelectedDirs}：整棵子树都放行；</li>
+     *   <li>{@link #mPartialDirs}：只放行了目录自身，其下子项各自单独决定；</li>
+     *   <li>{@link #mSelectedFiles}：单个文件被放行。</li>
+     * </ul>
+     * 必须区分前两者：若只保留"目录被选中"这一种状态，那么取消子目录时
+     * 父目录仍整棵放行，子项会被父规则连带放行，表现为"怎么点都取消不掉"。
+     */
     private Set<String> mSelectedDirs = new LinkedHashSet<>();
+    private Set<String> mPartialDirs = new LinkedHashSet<>();
     private Set<String> mSelectedFiles = new LinkedHashSet<>();
     private Set<String> mInitialDirs = new LinkedHashSet<>();
+    private Set<String> mInitialPartial = new LinkedHashSet<>();
     private Set<String> mInitialFiles = new LinkedHashSet<>();
 
     private TreeAdapter mAdapter;
@@ -143,8 +160,10 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             return;
         }
         mSelectedDirs = mStore.getSelectedDirs(folderId);
+        mPartialDirs = mStore.getPartialDirs(folderId);
         mSelectedFiles = mStore.getSelectedFiles(folderId);
         mInitialDirs = new LinkedHashSet<>(mSelectedDirs);
+        mInitialPartial = new LinkedHashSet<>(mPartialDirs);
         mInitialFiles = new LinkedHashSet<>(mSelectedFiles);
 
         mPathView = findViewById(R.id.current_path);
@@ -179,7 +198,9 @@ public class SelectiveSyncActivity extends SyncthingActivity {
 
         findViewById(R.id.clear_selection).setOnClickListener(v -> {
             mSelectedDirs.clear();
+            mPartialDirs.clear();
             mSelectedFiles.clear();
+            recomputeStates();
             mAdapter.notifyDataSetChanged();
         });
         findViewById(R.id.save).setOnClickListener(v -> onSave());
@@ -228,6 +249,71 @@ public class SelectiveSyncActivity extends SyncthingActivity {
                                    android.os.IBinder iBinder) {
         super.onServiceConnected(componentName, iBinder);
         loadChildren(-1, null);
+        // 目标端的 .stignore 才是准的：缓存的选择集可能与它不一致
+        // （别的设备改过、或上次保存没写成功），所以用反解结果覆盖一次。
+        reloadFromRemoteIgnores();
+    }
+
+    /**
+     * 读取目标端的 .stignore，反解出勾选状态并覆盖本地选择集。
+     *
+     * <p>规则里没有类型信息，所以"只放行自身"的条目（可能是目录也可能是文件）
+     * 统一放进 mPartialDirs —— 两者生成的规则写法一样（放行自身、不放行子树），
+     * 因此不需要区分，也不会写错规则。
+     */
+    private void reloadFromRemoteIgnores() {
+        RestApi restApi = getApi();
+        if (restApi == null || !restApi.isConfigLoaded()) {
+            return;
+        }
+        mConfig.getFolderIgnoreList(restApi, mFolder, folderIgnoreList -> {
+            if (folderIgnoreList == null || folderIgnoreList.ignore == null) {
+                return;
+            }
+            String existing = TextUtils.join("\n", folderIgnoreList.ignore);
+            SelectiveSyncPatterns.Selection parsed =
+                    SelectiveSyncPatterns.parseManagedBlock(existing);
+            if (!parsed.hasBlock) {
+                // 没有托管块 = 目标端没有选择性同步规则 = 全部同步
+                markAllLoadedSelected();
+                return;
+            }
+            mSelectedDirs = new LinkedHashSet<>(parsed.fullDirs);
+            mPartialDirs = new LinkedHashSet<>();
+            mSelectedFiles = new LinkedHashSet<>();
+            for (String path : parsed.selectedPaths) {
+                if (!parsed.fullDirs.contains(path)) {
+                    mPartialDirs.add(path);
+                }
+            }
+            mInitialDirs = new LinkedHashSet<>(mSelectedDirs);
+            mInitialPartial = new LinkedHashSet<>(mPartialDirs);
+            mInitialFiles = new LinkedHashSet<>(mSelectedFiles);
+            recomputeStates();
+            mAdapter.notifyDataSetChanged();
+        });
+    }
+
+    /** 已加载的行全部打勾（目标端没有忽略规则时使用）。 */
+    private void markAllLoadedSelected() {
+        if (mRows.isEmpty()) {
+            return;
+        }
+        mSelectedDirs = new LinkedHashSet<>();
+        mPartialDirs = new LinkedHashSet<>();
+        mSelectedFiles = new LinkedHashSet<>();
+        for (TreeRow row : mRows) {
+            if (row.dir) {
+                mSelectedDirs.add(row.path);
+            } else {
+                mSelectedFiles.add(row.path);
+            }
+        }
+        mInitialDirs = new LinkedHashSet<>(mSelectedDirs);
+        mInitialPartial = new LinkedHashSet<>(mPartialDirs);
+        mInitialFiles = new LinkedHashSet<>(mSelectedFiles);
+        recomputeStates();
+        mAdapter.notifyDataSetChanged();
     }
 
     private Folder findFolder(String folderId) {
@@ -393,50 +479,154 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         }
     }
 
+    /** 取某一层内容的回调；自定义接口而非 java.util.function，避免 minSdk 23 的脱糖问题。 */
+    private interface EntriesCallback {
+        void onEntries(List<BrowseEntry> entries);
+    }
+
     private void toggle(TreeRow row, boolean checked) {
-        if (row.dir) {
-            if (checked) {
+        if (checked) {
+            if (row.dir) {
                 mSelectedDirs.add(row.path);
-                // 父目录选中 -> 整棵子树随之选中，清掉子项上的独立状态避免混淆
+                mPartialDirs.remove(row.path);
+                // 整棵放行后，子项上的独立状态就没有意义了，清掉避免混淆
                 clearDescendants(row.path);
             } else {
-                mSelectedDirs.remove(row.path);
-                // 父目录取消 -> 子项一起取消
-                clearDescendants(row.path);
-            }
-        } else {
-            if (checked) {
                 mSelectedFiles.add(row.path);
-            } else {
-                mSelectedFiles.remove(row.path);
+            }
+            recomputeStates();
+            mAdapter.notifyDataSetChanged();
+            return;
+        }
+        if (!row.dir) {
+            mSelectedFiles.remove(row.path);
+            recomputeStates();
+            mAdapter.notifyDataSetChanged();
+            return;
+        }
+        // 取消目录：先把"整棵放行"的祖先拆成逐项放行，再摘掉自己。
+        // 不拆的话父规则会把这一支连带放行，表现为"子目录怎么点都取消不掉"。
+        materializeAncestors(row.path, () -> {
+            removeWithDescendants(row.path);
+            recomputeStates();
+            mAdapter.notifyDataSetChanged();
+        });
+    }
+
+    /**
+     * 取消勾选前，把"整棵放行"的祖先逐层拆成逐项放行。
+     *
+     * <p>不拆的话，那条"放行父目录整棵子树"的规则会把子项一起放行 ——
+     * .stignore 首个匹配生效，父规则先命中就轮不到子项，子项单独取消是不生效的。
+     * 必须一路拆到直接父目录，只拆一层是不够的。
+     */
+    private void materializeAncestors(String path, Runnable done) {
+        materializeStep(ancestorsOf(path), 0, done);
+    }
+
+    private void materializeStep(final List<String> ancestors, final int index,
+                                 final Runnable done) {
+        if (index >= ancestors.size()) {
+            done.run();
+            return;
+        }
+        final String ancestor = ancestors.get(index);
+        if (!mSelectedDirs.contains(ancestor)) {
+            materializeStep(ancestors, index + 1, done);
+            return;
+        }
+        fetchEntries(ancestor, entries -> {
+            if (entries != null && !entries.isEmpty()) {
+                for (BrowseEntry entry : entries) {
+                    if (entry == null || entry.name == null) {
+                        continue;
+                    }
+                    String child = ancestor + "/" + entry.name;
+                    if (entry.isDirectory()) {
+                        mSelectedDirs.add(child);
+                    } else {
+                        mSelectedFiles.add(child);
+                    }
+                    mPartialDirs.remove(child);
+                }
+                mSelectedDirs.remove(ancestor);
+                mPartialDirs.add(ancestor);
+            }
+            materializeStep(ancestors, index + 1, done);
+        });
+    }
+
+    /** 从根到该路径的直接父目录，逐层列出（顶层路径返回空表）。 */
+    private List<String> ancestorsOf(String path) {
+        List<String> out = new ArrayList<>();
+        String[] comps = path.split("/");
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i < comps.length - 1; i++) {
+            if (current.length() > 0) {
+                current.append('/');
+            }
+            current.append(comps[i]);
+            out.add(current.toString());
+        }
+        return out;
+    }
+
+    /**
+     * 取某一层的内容：优先用缓存，缓存没有再走 REST。
+     * 拆分"整棵放行"的祖先时必须要知道它有哪些子项，否则拆不成逐项。
+     */
+    private void fetchEntries(String prefix, EntriesCallback callback) {
+        SelectiveSyncTreeCache.Level cached = mCache.getLevel(mFolder.id, prefix);
+        if (cached != null && cached.entries != null && !cached.entries.isEmpty()) {
+            callback.onEntries(convertCached(cached));
+            return;
+        }
+        RestApi restApi = getApi();
+        if (restApi == null || !restApi.isConfigLoaded()) {
+            callback.onEntries(null);
+            return;
+        }
+        restApi.getFolderBrowse(mFolder.id, prefix, BROWSE_LEVELS, callback::onEntries);
+    }
+
+    /**
+     * 把这一项连同它的后代一起从勾选里摘掉。
+     *
+     * 目录整棵取消时，它下面被单独勾选的子项也必须一起摘掉 ——
+     * 父目录被忽略后，子项单独放行在 Syncthing 里根本不生效，
+     * 留着只会让生成的 .stignore 自相矛盾。
+     */
+    private void removeWithDescendants(String path) {
+        mSelectedDirs.remove(path);
+        mPartialDirs.remove(path);
+        mSelectedFiles.remove(path);
+        String prefix = path + "/";
+        removePrefixed(mSelectedDirs, prefix);
+        removePrefixed(mPartialDirs, prefix);
+        removePrefixed(mSelectedFiles, prefix);
+    }
+
+    private void removePrefixed(Set<String> set, String prefix) {
+        Iterator<String> it = set.iterator();
+        while (it.hasNext()) {
+            if (it.next().startsWith(prefix)) {
+                it.remove();
             }
         }
-        recomputeStates();
     }
 
     /** 清除该目录下所有后代的独立选择状态。 */
     private void clearDescendants(String dirPath) {
         String prefix = dirPath + "/";
-        Iterator<String> dirs = mSelectedDirs.iterator();
-        while (dirs.hasNext()) {
-            if (dirs.next().startsWith(prefix)) {
-                dirs.remove();
-            }
-        }
-        Iterator<String> files = mSelectedFiles.iterator();
-        while (files.hasNext()) {
-            if (files.next().startsWith(prefix)) {
-                files.remove();
-            }
-        }
+        removePrefixed(mSelectedDirs, prefix);
+        removePrefixed(mPartialDirs, prefix);
+        removePrefixed(mSelectedFiles, prefix);
     }
 
     /** 统一计算各行的显示状态，供 getView 直接读取。 */
     private void recomputeStates() {
         for (TreeRow row : mRows) {
-            boolean selected = row.dir
-                    ? mSelectedDirs.contains(row.path)
-                    : mSelectedFiles.contains(row.path);
+            boolean selected = isSelected(row);
             row.selected = selected;
             row.covered = !selected && isCoveredByParent(row);
             row.partial = row.dir && !selected && !row.covered
@@ -445,13 +635,19 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     }
 
     private boolean isSelected(TreeRow row) {
-        return row.dir ? mSelectedDirs.contains(row.path) : mSelectedFiles.contains(row.path);
+        return row.dir
+                ? (mSelectedDirs.contains(row.path) || mPartialDirs.contains(row.path))
+                : mSelectedFiles.contains(row.path);
     }
 
-    /** 该路径已由某个选中的父目录覆盖（隐式选中）。 */
+    /**
+     * 该路径已由某个"整棵放行"的父目录覆盖（隐式选中）。
+     *
+     * 只放行了自身的目录不覆盖子项 —— 这正是拆分成三桶的意义所在。
+     */
     private boolean isCoveredByParent(TreeRow row) {
         for (String dir : mSelectedDirs) {
-            if (row.path.equals(dir) || row.path.startsWith(dir + "/")) {
+            if (row.path.startsWith(dir + "/")) {
                 return true;
             }
         }
@@ -462,6 +658,11 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     private boolean hasSelectedDescendant(String dirPath) {
         String prefix = dirPath + "/";
         for (String dir : mSelectedDirs) {
+            if (dir.startsWith(prefix)) {
+                return true;
+            }
+        }
+        for (String dir : mPartialDirs) {
             if (dir.startsWith(prefix)) {
                 return true;
             }
@@ -481,6 +682,11 @@ public class SelectiveSyncActivity extends SyncthingActivity {
                 result.add(dir);
             }
         }
+        for (String dir : mPartialDirs) {
+            if (!hasSelectedAncestor(dir)) {
+                result.add(dir);
+            }
+        }
         for (String file : mSelectedFiles) {
             if (!hasSelectedAncestor(file)) {
                 result.add(file);
@@ -489,6 +695,7 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         return result;
     }
 
+    /** 只有"整棵放行"的祖先会连带放行子项；部分放行的祖先不会。 */
     private boolean hasSelectedAncestor(String path) {
         for (String dir : mSelectedDirs) {
             if (path.startsWith(dir + "/")) {
@@ -516,7 +723,14 @@ public class SelectiveSyncActivity extends SyncthingActivity {
     private List<String> removedSelections() {
         List<String> removed = new ArrayList<>();
         for (String path : mInitialDirs) {
-            if (!mSelectedDirs.contains(path) && new File(mFolder.path, path).exists()) {
+            if (!mSelectedDirs.contains(path) && !mPartialDirs.contains(path)
+                    && new File(mFolder.path, path).exists()) {
+                removed.add(path);
+            }
+        }
+        for (String path : mInitialPartial) {
+            if (!mSelectedDirs.contains(path) && !mPartialDirs.contains(path)
+                    && new File(mFolder.path, path).exists()) {
                 removed.add(path);
             }
         }
@@ -623,6 +837,8 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         for (String path : paths) {
             if (mInitialDirs.contains(path)) {
                 mSelectedDirs.add(path);
+            } else if (mInitialPartial.contains(path)) {
+                mPartialDirs.add(path);
             } else {
                 mSelectedFiles.add(path);
             }
@@ -649,7 +865,7 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             SelectiveSyncPatterns.Result result = SelectiveSyncPatterns.buildStignore(
                     existing, selected, dirs, SelectiveSyncPatterns.DEFAULT_MAX_PATTERNS, enabled);
             mConfig.postFolderIgnoreList(restApi, mFolder, result.text.split("\n"));
-            mStore.save(mFolder.id, mSelectedDirs, mSelectedFiles);
+            mStore.save(mFolder.id, mSelectedDirs, mPartialDirs, mSelectedFiles);
             mStore.setEnabled(mFolder.id, enabled);
             showWarnings(result.warnings);
 
@@ -672,18 +888,28 @@ public class SelectiveSyncActivity extends SyncthingActivity {
             executor.execute(() -> {
                 // 等忽略规则生效后再删，避免 Syncthing 把删除当作本地真实删除传播到远端
                 waitForFolderIdle(restApi, 20000L);
-                final List<String> failed = deletePaths(pathsToDelete);
-                final int finalDeleted = pathsToDelete.size() - failed.size();
+                final DeleteOutcome outcome = deletePaths(pathsToDelete, (done, total) -> {
+                    // 每 50 条刷新一次就够：逐条刷新界面会把主线程刷死
+                    if (done % 50 == 0 || done == total) {
+                        final int shown = done;
+                        mainHandler.post(() -> showWarnings(Collections.singletonList(
+                                getString(R.string.selective_sync_deleting_progress,
+                                        shown, total))));
+                    }
+                });
                 mainHandler.post(() -> {
                     Toast.makeText(SelectiveSyncActivity.this,
                             getString(R.string.selective_sync_deleted_count,
-                                    finalDeleted, pathsToDelete.size()),
+                                    outcome.deleted.size(), pathsToDelete.size()),
                             Toast.LENGTH_SHORT).show();
-                    if (!failed.isEmpty()) {
-                        Toast.makeText(SelectiveSyncActivity.this,
-                                getString(R.string.selective_sync_delete_failed,
-                                        TextUtils.join("\n", failed)),
-                                Toast.LENGTH_LONG).show();
+                    if (!outcome.failed.isEmpty()) {
+                        List<String> notes = new ArrayList<>();
+                        for (Map.Entry<String, String> entry : outcome.failed.entrySet()) {
+                            notes.add(entry.getKey() + " → " + entry.getValue());
+                        }
+                        showWarnings(notes);
+                    } else {
+                        showWarnings(null);
                     }
                     Toast.makeText(SelectiveSyncActivity.this, R.string.selective_sync_saved,
                             Toast.LENGTH_SHORT).show();
@@ -711,13 +937,29 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         }
     }
 
+    /** 删除结果：成功清单 + 失败清单（路径 → 原因）。 */
+    private static final class DeleteOutcome {
+        final List<String> deleted = new ArrayList<>();
+        final Map<String, String> failed = new LinkedHashMap<>();
+    }
+
+    private interface ProgressListener {
+        void onProgress(int done, int total);
+    }
+
     /**
-     * 删除指定路径，返回仍然删除失败的路径。
+     * 删除指定路径。
      *
-     * <p>先删父目录（路径短的在前），子项会随之消失，既避免重复操作，
-     * 也不会把"已被父目录带走"误报成失败。
+     * <p>先摊平再删，两个理由：
+     * <ul>
+     *   <li>删除前就知道总数，好给进度 —— 大目录（实测目标端一个目录含 8449 个文件）
+     *       串行删要两分钟，没有反馈跟卡死没区别；</li>
+     *   <li>能定位到底是哪一条删不掉。只报"失败 N 项"用户根本无从下手。</li>
+     * </ul>
+     * 顺序上深的先删、父目录最后删，避免把"已被父目录带走"误报成失败。
      */
-    private List<String> deletePaths(List<String> paths) {
+    private DeleteOutcome deletePaths(List<String> paths, ProgressListener listener) {
+        DeleteOutcome outcome = new DeleteOutcome();
         List<String> sorted = new ArrayList<>(paths);
         // 不用 Comparator.comparingInt：那需要 API 24，而 minSdk 是 23，Lint 会判为错误
         Collections.sort(sorted, new Comparator<String>() {
@@ -726,42 +968,86 @@ public class SelectiveSyncActivity extends SyncthingActivity {
                 return a.length() - b.length();
             }
         });
-        List<String> failed = new ArrayList<>();
+
+        List<File> targets = new ArrayList<>();
         for (String path : sorted) {
             File file = new File(mFolder.path, path);
-            if (!file.exists()) {
-                continue;
+            if (file.exists()) {
+                collectDeletable(file, targets);
             }
-            boolean ok = deleteRecursively(file);
+        }
+        final int total = targets.size();
+        Collections.sort(targets, new Comparator<File>() {
+            @Override
+            public int compare(File a, File b) {
+                return b.getAbsolutePath().length() - a.getAbsolutePath().length();
+            }
+        });
+
+        // 中间条目失败的原因，最后汇总到它所属的顶层路径上
+        Map<String, String> intermediate = new LinkedHashMap<>();
+        int done = 0;
+        for (File file : targets) {
+            boolean ok = file.delete();
             if (!ok && file.exists()) {
-                // 文件可能正被 Syncthing 占用，稍等后重试一次
+                // 可能正被 Syncthing 占用，稍等后重试一次
                 try {
                     Thread.sleep(300L);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                ok = deleteRecursively(file);
+                ok = file.delete();
             }
             if (!ok && file.exists()) {
-                failed.add(path);
+                intermediate.put(relativeOf(file), "可能被占用或没有写权限");
+            }
+            done++;
+            if (listener != null) {
+                listener.onProgress(done, total);
             }
         }
-        return failed;
+
+        for (String path : sorted) {
+            File file = new File(mFolder.path, path);
+            if (!file.exists()) {
+                outcome.deleted.add(path);
+                continue;
+            }
+            String cause = null;
+            for (Map.Entry<String, String> entry : intermediate.entrySet()) {
+                if (entry.getKey().startsWith(path + "/")) {
+                    cause = entry.getKey();
+                    break;
+                }
+            }
+            outcome.failed.put(path, cause != null
+                    ? "子树里有没删掉的条目：" + cause
+                    : "删除失败：可能被占用或没有写权限");
+        }
+        return outcome;
     }
 
-    private boolean deleteRecursively(File file) {
-        if (file == null || !file.exists()) {
-            return false;
-        }
+    /** 摊平：先收集所有后代，最后是父目录自身。 */
+    private void collectDeletable(File file, List<File> out) {
         if (file.isDirectory()) {
             File[] children = file.listFiles();
             if (children != null) {
                 for (File child : children) {
-                    deleteRecursively(child);
+                    collectDeletable(child, out);
                 }
             }
         }
-        return file.delete();
+        out.add(file);
+    }
+
+    /** 绝对路径还原成相对文件夹根的路径。 */
+    private String relativeOf(File file) {
+        String base = new File(mFolder.path).getAbsolutePath();
+        String abs = file.getAbsolutePath();
+        if (abs.startsWith(base + File.separator)) {
+            return abs.substring(base.length() + 1);
+        }
+        return abs;
     }
 
     private void showWarnings(List<String> warnings) {
@@ -774,6 +1060,177 @@ public class SelectiveSyncActivity extends SyncthingActivity {
         }
         mWarningsView.setVisibility(View.VISIBLE);
         mWarningsView.setText(TextUtils.join("\n", warnings));
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(Menu.NONE, MENU_CLEANUP, Menu.NONE, R.string.selective_sync_cleanup);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == MENU_CLEANUP) {
+            runCleanup();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * 扫描本机上"按当前勾选本不该存在"的条目，列出来让用户勾选删除。
+     *
+     * <p>用途：以前同步过、后来取消勾选的东西，磁盘上可能还留着，
+     * 光靠"取消勾选时顺带删"清不掉历史遗留。
+     *
+     * <p>判定只看当前勾选，不再去解析 .stignore 文本 —— 两者口径是一致的，
+     * 因为 .stignore 本来就是由这份勾选生成的。
+     */
+    private void runCleanup() {
+        final ExecutorService executor = Executors.newSingleThreadExecutor();
+        final Handler mainHandler = new Handler(Looper.getMainLooper());
+        showWarnings(Collections.singletonList(
+                getString(R.string.selective_sync_cleanup_scanning)));
+        executor.execute(() -> {
+            final List<String> excess = scanExcessLocally();
+            mainHandler.post(() -> {
+                showWarnings(null);
+                if (excess.isEmpty()) {
+                    Toast.makeText(SelectiveSyncActivity.this,
+                            R.string.selective_sync_cleanup_empty, Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                showExcessDialog(excess);
+            });
+        });
+        executor.shutdown();
+    }
+
+    private List<String> scanExcessLocally() {
+        List<String> out = new ArrayList<>();
+        if (mFolder == null || mFolder.path == null) {
+            return out;
+        }
+        File root = new File(mFolder.path);
+        if (!root.isDirectory()) {
+            return out;
+        }
+        collectExcess("", root, out);
+        Collections.sort(out);
+        return out;
+    }
+
+    private void collectExcess(String prefix, File dir, List<String> out) {
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            String name = child.getName();
+            if (INTERNAL_ENTRIES.contains(name)) {
+                continue;
+            }
+            String path = prefix.isEmpty() ? name : prefix + "/" + name;
+            if (isExcess(path, child.isDirectory())) {
+                // 整棵都是多余的，直接记目录，不用再下去
+                out.add(path);
+            } else if (child.isDirectory()) {
+                collectExcess(path, child, out);
+            }
+        }
+    }
+
+    /**
+     * 按当前勾选判定是否多余：整棵放行 / 自身被放行 / 是被放行项的中间层 → 保留；
+     * 其余都算多余。目录还要留着当"通道"，否则里面被单独放行的内容也进不去。
+     */
+    private boolean isExcess(String path, boolean dir) {
+        if (mSelectedDirs.contains(path)) {
+            return false;
+        }
+        if (mPartialDirs.contains(path)) {
+            return false;
+        }
+        if (mSelectedFiles.contains(path)) {
+            return false;
+        }
+        for (String selected : mSelectedDirs) {
+            if (path.startsWith(selected + "/")) {
+                return false;
+            }
+        }
+        if (dir) {
+            String prefix = path + "/";
+            for (String selected : mSelectedDirs) {
+                if (selected.startsWith(prefix)) {
+                    return false;
+                }
+            }
+            for (String selected : mPartialDirs) {
+                if (selected.startsWith(prefix)) {
+                    return false;
+                }
+            }
+            for (String selected : mSelectedFiles) {
+                if (selected.startsWith(prefix)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private void showExcessDialog(final List<String> excess) {
+        final boolean[] checked = new boolean[excess.size()];
+        Arrays.fill(checked, true);
+        CharSequence[] items = excess.toArray(new CharSequence[0]);
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.selective_sync_cleanup_title)
+                .setMultiChoiceItems(items, checked,
+                        (dialog, which, isChecked) -> checked[which] = isChecked)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.selective_sync_cleanup, (dialog, which) -> {
+                    List<String> chosen = new ArrayList<>();
+                    for (int i = 0; i < excess.size(); i++) {
+                        if (checked[i]) {
+                            chosen.add(excess.get(i));
+                        }
+                    }
+                    if (!chosen.isEmpty()) {
+                        confirmCleanupDelete(chosen);
+                    }
+                })
+                .show();
+    }
+
+    private void confirmCleanupDelete(final List<String> chosen) {
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.selective_sync_cleanup_title)
+                .setMessage(getString(R.string.selective_sync_cleanup_confirm, chosen.size()))
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.selective_sync_cleanup, (dialog, which) -> {
+                    final ExecutorService executor = Executors.newSingleThreadExecutor();
+                    final Handler mainHandler = new Handler(Looper.getMainLooper());
+                    executor.execute(() -> {
+                        final DeleteOutcome outcome = deletePaths(chosen, null);
+                        mainHandler.post(() -> {
+                            Toast.makeText(SelectiveSyncActivity.this,
+                                    getString(R.string.selective_sync_cleanup_done,
+                                            outcome.deleted.size()),
+                                    Toast.LENGTH_SHORT).show();
+                            if (!outcome.failed.isEmpty()) {
+                                List<String> notes = new ArrayList<>();
+                                for (Map.Entry<String, String> entry
+                                        : outcome.failed.entrySet()) {
+                                    notes.add(entry.getKey() + " → " + entry.getValue());
+                                }
+                                showWarnings(notes);
+                            }
+                        });
+                    });
+                    executor.shutdown();
+                })
+                .show();
     }
 
     private static String nullSafe(String value) {

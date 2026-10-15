@@ -1179,6 +1179,13 @@
     <string name="selective_sync_deleted_count">Removed %1$d of %2$d item(s).</string>
     <string name="selective_sync_deleting">Applying ignore rules, then removing local files…</string>
     <string name="selective_sync_delete_failed">Could not remove (still in use or no write access):\n%1$s</string>
+    <string name="selective_sync_deleting_progress">Removing %1$d of %2$d …</string>
+    <string name="selective_sync_cleanup">Clean up extra files</string>
+    <string name="selective_sync_cleanup_title">Present on this device but not in your selection</string>
+    <string name="selective_sync_cleanup_empty">Nothing to clean: local content matches your selection.</string>
+    <string name="selective_sync_cleanup_confirm">Delete the selected %1$d item(s) from this device? This cannot be undone.</string>
+    <string name="selective_sync_cleanup_done">Removed %1$d item(s).</string>
+    <string name="selective_sync_cleanup_scanning">Scanning local files…</string>
     <string name="branch_version_title">Branch version</string>
     <string name="branch_name">Optsyncthing-android</string>
     <string name="selective_sync_enable">Selective sync</string>

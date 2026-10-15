@@ -15,6 +15,8 @@ public class SelectiveSyncStore {
 
     private static final String PREF_DIRS = "selective_sync_dirs_";
 
+    private static final String PREF_PARTIAL_DIRS = "selective_sync_partial_dirs_";
+
     private static final String PREF_FILES = "selective_sync_files_";
 
     private static final String PREF_ENABLED = "selective_sync_enabled_";
@@ -25,8 +27,19 @@ public class SelectiveSyncStore {
         mPreferences = preferences;
     }
 
+    /**
+     * 整棵子树都被放行的目录。
+     *
+     * <p>与 {@link #getPartialDirs} 的区别是关键的：只有这里面的目录才会"连带子项一起放行"，
+     * 部分放行的目录只放行自身，子项各自按自己的勾选算。
+     */
     public Set<String> getSelectedDirs(String folderId) {
         return new LinkedHashSet<>(readSet(PREF_DIRS + folderId));
+    }
+
+    /** 只放行了自身、其下子项各自单独决定的目录。 */
+    public Set<String> getPartialDirs(String folderId) {
+        return new LinkedHashSet<>(readSet(PREF_PARTIAL_DIRS + folderId));
     }
 
     public Set<String> getSelectedFiles(String folderId) {
@@ -44,9 +57,11 @@ public class SelectiveSyncStore {
         return !readSet(PREF_DIRS + folderId).isEmpty() || !readSet(PREF_FILES + folderId).isEmpty();
     }
 
-    public void save(String folderId, Set<String> dirs, Set<String> files) {
+    public void save(String folderId, Set<String> fullDirs, Set<String> partialDirs,
+                     Set<String> files) {
         mPreferences.edit()
-                .putStringSet(PREF_DIRS + folderId, new LinkedHashSet<>(dirs))
+                .putStringSet(PREF_DIRS + folderId, new LinkedHashSet<>(fullDirs))
+                .putStringSet(PREF_PARTIAL_DIRS + folderId, new LinkedHashSet<>(partialDirs))
                 .putStringSet(PREF_FILES + folderId, new LinkedHashSet<>(files))
                 .apply();
     }
@@ -66,6 +81,7 @@ public class SelectiveSyncStore {
     public void clear(String folderId) {
         mPreferences.edit()
                 .remove(PREF_DIRS + folderId)
+                .remove(PREF_PARTIAL_DIRS + folderId)
                 .remove(PREF_FILES + folderId)
                 .apply();
     }
