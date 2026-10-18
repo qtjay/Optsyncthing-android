@@ -58,7 +58,10 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.github.catfriend1.syncthingfork"
+        // 独立 applicationId：与官方版共存安装，升级时也不会互相覆盖。
+        // 源码包名保持 com.nutomic.syncthingandroid 不动 —— 只改这一行能让与上游的
+        // 差异最小，将来同步上游几乎不会冲突。
+        applicationId = "com.qtjay.syncthingfork.opt"
         minSdk = libs.versions.min.sdk.get().toInt()
         targetSdk = libs.versions.target.sdk.get().toInt()
         versionCode = libs.versions.version.code.get().toInt()
