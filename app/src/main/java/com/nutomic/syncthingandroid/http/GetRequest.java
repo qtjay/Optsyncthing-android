@@ -28,6 +28,8 @@ public class GetRequest extends ApiRequest {
     public static final String URI_DB_COMPLETION    = "/rest/db/completion";
     public static final String URI_DB_IGNORES       = "/rest/db/ignores";
     public static final String URI_DB_STATUS        = "/rest/db/status";
+    public static final String URI_DB_BROWSE        = "/rest/db/browse";
+    public static final String URI_DB_FILE          = "/rest/db/file";
     public static final String URI_DEVICEID         = "/rest/svc/deviceid";
     public static final String URI_REPORT           = "/rest/svc/report";
     public static final String URI_EVENTS           = "/rest/events";

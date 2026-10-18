@@ -45,6 +45,7 @@ import com.nutomic.syncthingandroid.model.Device;
 import com.nutomic.syncthingandroid.model.Folder;
 import com.nutomic.syncthingandroid.model.FolderIgnoreList;
 import com.nutomic.syncthingandroid.model.SharedWithDevice;
+import com.nutomic.syncthingandroid.selectivesync.SelectiveSyncActivity;
 import com.nutomic.syncthingandroid.service.Constants;
 import com.nutomic.syncthingandroid.service.RestApi;
 import com.nutomic.syncthingandroid.service.SyncthingService;
@@ -52,6 +53,8 @@ import com.nutomic.syncthingandroid.service.SyncthingServiceBinder;
 import com.nutomic.syncthingandroid.util.ConfigRouter;
 import com.nutomic.syncthingandroid.util.FileUtils;
 import com.nutomic.syncthingandroid.util.FileUtils.ExternalStorageDirType;
+import com.nutomic.syncthingandroid.util.SelectiveSyncPatterns;
+import com.nutomic.syncthingandroid.util.SelectiveSyncStore;
 import com.nutomic.syncthingandroid.util.TextWatcherAdapter;
 import com.nutomic.syncthingandroid.util.Util;
 
@@ -60,6 +63,7 @@ import java.io.FileWriter;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -104,6 +108,7 @@ public class FolderActivity extends SyncthingActivity {
     private static final int PULL_ORDER_DIALOG_REQUEST = 3455;
     private static final int FOLDER_TYPE_DIALOG_REQUEST =3456;
     private static final int CHOOSE_FOLDER_REQUEST = 3459;
+    private static final int SELECTIVE_SYNC_REQUEST = 3460;
 
     public static final int FOLDER_ADD_CODE = 402;
 
@@ -140,6 +145,13 @@ public class FolderActivity extends SyncthingActivity {
     private TextView mEditIgnoreListTitle;
     private EditText mEditIgnoreListContent;
     private View mSavingOverlay;
+
+    // 选择性同步：开关 + 进入目录树勾选界面的入口
+    private ViewGroup mSelectiveSyncContainer;
+    private SwitchCompat mSelectiveSyncSwitch;
+    private TextView mSelectiveSyncDescription;
+    private ViewGroup mSelectiveSyncEntry;
+    private SelectiveSyncStore mSelectiveSyncStore;
 
     @Inject
     SharedPreferences mPreferences;
@@ -252,9 +264,73 @@ public class FolderActivity extends SyncthingActivity {
             } else if (id == R.id.ignoreDelete) {
                 mFolder.ignoreDelete = isChecked;
                 mFolderNeedsToUpdate = true;
+            } else if (id == R.id.selectiveSyncSwitch) {
+                onSelectiveSyncSwitchChanged(isChecked);
             }
         }
     };
+
+    /** 打开选择性同步界面（目录树勾选）。 */
+    private void openSelectiveSync() {
+        if (mIsCreateMode || mFolder == null) {
+            return;
+        }
+        Intent intent = new Intent(FolderActivity.this, SelectiveSyncActivity.class);
+        intent.putExtra(SelectiveSyncActivity.EXTRA_FOLDER_ID, mFolder.id);
+        startActivityForResult(intent, SELECTIVE_SYNC_REQUEST);
+    }
+
+    /**
+     * 选择性同步开关。
+     *
+     * <p>它不改别的东西，只改写忽略规则框里的文本 —— 与用户在框里直接编辑用的是同一条
+     * 提交路径（保存时才写回 Syncthing），不会出现"开关改了一份、文本框是另一份"。
+     *
+     * <p>开启时若还没有任何选择集，不写任何规则：空选择集生成的块等于"什么都不同步"，
+     * 那会在用户还没勾过任何东西的情况下把整个文件夹静默停掉。此时直接打开勾选界面，
+     * 让用户先选。
+     */
+    private void onSelectiveSyncSwitchChanged(boolean want) {
+        if (mFolder == null || mSelectiveSyncSwitch == null) {
+            return;
+        }
+        if (want == mSelectiveSyncStore.isEnabled(mFolder.id)) {
+            return;
+        }
+        mSelectiveSyncStore.setEnabled(mFolder.id, want);
+        if (!want) {
+            // 关闭：移除托管块，恢复全部同步（用户自己写的规则保留）
+            applyIgnoreListText(SelectiveSyncPatterns.stripManagedBlock(currentIgnoreListText()));
+            return;
+        }
+        List<String> selected = mSelectiveSyncStore.selectedPaths(mFolder.id);
+        if (selected.isEmpty()) {
+            // 还没有选择集：先让用户去勾，勾完那边会自己写规则
+            openSelectiveSync();
+            return;
+        }
+        applyIgnoreListText(
+                SelectiveSyncPatterns.buildStignore(
+                        currentIgnoreListText(),
+                        selected,
+                        mSelectiveSyncStore.fullDirs(mFolder.id),
+                ).text
+        );
+    }
+
+    private String currentIgnoreListText() {
+        return mEditIgnoreListContent == null ? "" : mEditIgnoreListContent.getText().toString();
+    }
+
+    /** 改忽略规则框的内容，并标上"需要写回"。 */
+    private void applyIgnoreListText(String text) {
+        if (mEditIgnoreListContent == null) {
+            return;
+        }
+        mEditIgnoreListContent.setText(text);
+        mIgnoreListNeedsToUpdate = true;
+        mFolderNeedsToUpdate = true;
+    }
 
     public static Intent createIntent(Context context) {
         Intent intent = new Intent(context, FolderActivity.class);
@@ -301,6 +377,11 @@ public class FolderActivity extends SyncthingActivity {
         mEditIgnoreListTitle = findViewById(R.id.edit_ignore_list_title);
         mEditIgnoreListContent = findViewById(R.id.edit_ignore_list_content);
         mSavingOverlay = findViewById(R.id.savingOverlay);
+        mSelectiveSyncContainer = findViewById(R.id.selectiveSyncContainer);
+        mSelectiveSyncSwitch = findViewById(R.id.selectiveSyncSwitch);
+        mSelectiveSyncDescription = findViewById(R.id.selectiveSyncDescription);
+        mSelectiveSyncEntry = findViewById(R.id.selectiveSyncEntry);
+        mSelectiveSyncStore = new SelectiveSyncStore(this);
         if (mSavingOverlay != null && mSavingOverlay.getBackground() != null) {
             mSavingOverlay.getBackground().mutate().setAlpha(210);
         }
@@ -318,6 +399,7 @@ public class FolderActivity extends SyncthingActivity {
         folderTypeContainer.setOnClickListener(v -> showFolderTypeDialog());
         mPullOrderContainer.setOnClickListener(v -> showPullOrderDialog());
         findViewById(R.id.versioningContainer).setOnClickListener(v -> showVersioningDialog());
+        mSelectiveSyncEntry.setOnClickListener(v -> openSelectiveSync());
 
         if (savedInstanceState != null) {
             Log.d(TAG, "Retrieving state from savedInstanceState ...");
@@ -566,6 +648,7 @@ public class FolderActivity extends SyncthingActivity {
         mCustomSyncConditionsSwitch.setOnCheckedChangeListener(null);
         mIgnoreDelete.setOnCheckedChangeListener(null);
         mRunScriptSwitch.setOnCheckedChangeListener(null);
+        mSelectiveSyncSwitch.setOnCheckedChangeListener(null);
 
         // Update views
         mLabelView.setText(mFolder.label);
@@ -580,6 +663,16 @@ public class FolderActivity extends SyncthingActivity {
                 Constants.DYN_PREF_OBJECT_FOLDER_RUN_SCRIPT(mFolder.id), false
             ));
         findViewById(R.id.editIgnoresContainer).setVisibility(mIsCreateMode ? View.GONE : View.VISIBLE);
+
+        // 选择性同步：新建文件夹时还没有目录结构可勾，整块隐藏
+        mSelectiveSyncContainer.setVisibility(mIsCreateMode ? View.GONE : View.VISIBLE);
+        if (!mIsCreateMode) {
+            boolean selectiveSyncOn = mSelectiveSyncStore.isEnabled(mFolder.id);
+            mSelectiveSyncSwitch.setChecked(selectiveSyncOn);
+            mSelectiveSyncDescription.setText(selectiveSyncOn
+                    ? R.string.selective_sync_state_on
+                    : R.string.selective_sync_state_off);
+        }
 
         // Update views - custom sync conditions.
         mCustomSyncConditionsSwitch.setChecked(false);
@@ -615,6 +708,7 @@ public class FolderActivity extends SyncthingActivity {
         mCustomSyncConditionsSwitch.setOnCheckedChangeListener(mCheckedListener);
         mIgnoreDelete.setOnCheckedChangeListener(mCheckedListener);
         mRunScriptSwitch.setOnCheckedChangeListener(mCheckedListener);
+        mSelectiveSyncSwitch.setOnCheckedChangeListener(mCheckedListener);
     }
 
     @Override
@@ -673,6 +767,8 @@ public class FolderActivity extends SyncthingActivity {
                 .setMessage(R.string.remove_folder_confirm)
                 .setPositiveButton(android.R.string.yes, (dialogInterface, i) -> {
                     mConfig.removeFolder(getApi(), mFolder.id);
+                    // 文件夹都没了，选择集留着只会变成孤儿数据
+                    mSelectiveSyncStore.clear(mFolder.id);
                     if (mFolder.id.equals(Constants.syncthingCameraFolderId)) {
                         // Remove consent to "Syncthing Camera" feature.
                         SharedPreferences.Editor editor = mPreferences.edit();
@@ -738,6 +834,11 @@ public class FolderActivity extends SyncthingActivity {
             updatePullOrderDescription();
             mFolderNeedsToUpdate = true;
         } else if (resultCode == Activity.RESULT_OK && requestCode == DeviceActivity.DEVICE_ADD_CODE) {
+            updateViewsAndSetListeners();
+        } else if (requestCode == SELECTIVE_SYNC_REQUEST) {
+            // 勾选界面可能改写过 .stignore，也可能只改了开关状态 —— 都重新读一遍，
+            // 否则这个界面上的忽略规则框会停留在旧内容上，一保存就把那边的改动覆盖掉。
+            mConfig.getFolderIgnoreList(getApi(), mFolder, this::onReceiveFolderIgnoreList);
             updateViewsAndSetListeners();
         }
     }

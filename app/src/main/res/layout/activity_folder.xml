@@ -406,6 +406,69 @@
                     android:importantForAutofill="no"/>
 
                 </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/selectiveSyncContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center_vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            style="@style/Widget.Syncthing.TextView.Label.Details"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@null"
+                            app:drawableLeftCompat="@drawable/ic_visibility_off_black_24dp"
+                            app:drawableStartCompat="@drawable/ic_visibility_off_black_24dp"
+                            android:text="@string/selective_sync_title"
+                            android:focusable="false"/>
+
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/selectiveSyncSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="8dp"/>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/selectiveSyncDescription"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="55dp"
+                        android:textAppearance="@style/TextAppearance.AppCompat.Caption"
+                        android:text="@string/selective_sync_description"
+                        android:focusable="false"/>
+
+                    <LinearLayout
+                        android:id="@+id/selectiveSyncEntry"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?selectableItemBackground"
+                        android:orientation="vertical"
+                        android:gravity="center_vertical"
+                        android:focusable="true">
+
+                        <TextView
+                            style="@style/Widget.Syncthing.TextView.Label.Details"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="@null"
+                            app:drawableLeftCompat="@drawable/baseline_content_copy_24"
+                            app:drawableStartCompat="@drawable/baseline_content_copy_24"
+                            android:text="@string/selective_sync_entry"
+                            android:focusable="false"/>
+
+                    </LinearLayout>
+                </LinearLayout>
             </LinearLayout>
         </ScrollView>
     </LinearLayout>

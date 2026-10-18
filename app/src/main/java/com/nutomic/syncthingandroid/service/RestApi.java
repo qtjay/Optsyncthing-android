@@ -33,6 +33,7 @@ import com.nutomic.syncthingandroid.model.Connections;
 import com.nutomic.syncthingandroid.model.Device;
 import com.nutomic.syncthingandroid.model.DeviceStat;
 import com.nutomic.syncthingandroid.model.DiscoveredDevice;
+import com.nutomic.syncthingandroid.model.BrowseEntry;
 import com.nutomic.syncthingandroid.model.DiskEvent;
 import com.nutomic.syncthingandroid.model.Event;
 import com.nutomic.syncthingandroid.model.Folder;
@@ -49,6 +50,7 @@ import com.nutomic.syncthingandroid.model.RemoteCompletionInfo;
 import com.nutomic.syncthingandroid.model.RemoteIgnoredDevice;
 import com.nutomic.syncthingandroid.model.SharedWithDevice;
 import com.nutomic.syncthingandroid.model.SystemStatus;
+import com.nutomic.syncthingandroid.model.SyncthingFileInfo;
 import com.nutomic.syncthingandroid.model.SystemVersion;
 import com.nutomic.syncthingandroid.service.Constants;
 import com.nutomic.syncthingandroid.util.FileUtils;
@@ -565,6 +567,39 @@ public class RestApi {
     }
 
     /**
+     * Rescan a single folder.
+     *
+     * <p>Rewriting `.stignore` already makes Syncthing rescan on its own, but the timing is not
+     * guaranteed: until that happens the index still describes the old rules, and the
+     * selective-sync checks would be reading a stale picture. Asking explicitly removes the guess.
+     */
+    public void scanFolder(String folderId) {
+        Log.d(TAG, "scanFolder '" + folderId + "'");
+        new PostRequest(mContext, mUrl, PostRequest.URI_DB_SCAN, mApiKey,
+            ImmutableMap.of("folder", folderId), null, null);
+    }
+
+    /**
+     * Requests the live state of a single folder: {@code GET /rest/db/status}.
+     *
+     * <p>Used to read {@code state}, which is "scanning" while the index is being rebuilt — the
+     * selective-sync checks must not run against a moving index.
+     */
+    public void getFolderStatus(String folderId, OnResultListener1<FolderStatus> listener) {
+        new GetRequest(mContext, mUrl, GetRequest.URI_DB_STATUS, mApiKey,
+                ImmutableMap.of("folder", folderId), result -> {
+            FolderStatus status;
+            try {
+                status = mGson.fromJson(result, FolderStatus.class);
+            } catch (Exception e) {
+                Log.w(TAG, "getFolderStatus: failed to parse response", e);
+                status = null;
+            }
+            listener.onResult(status);
+        }, error -> {});
+    }
+
+    /**
      * Revert local folder changes. This is the same as hitting
      * the "Revert local changes" button from the web UI.
      */
@@ -866,6 +901,53 @@ public class RestApi {
         folderIgnoreList.ignore = ignore;
         new PostRequest(mContext, mUrl, PostRequest.URI_DB_IGNORES, mApiKey,
             ImmutableMap.of("folder", folderId), mGson.toJson(folderIgnoreList), null);
+    }
+
+    /**
+     * Requests one level of the global model tree: {@code GET /rest/db/browse}.
+     *
+     * <p>Only asks for the direct children (no {@code levels} parameter), so this stays cheap even
+     * on folders with tens of thousands of files — the caller expands lazily as the user drills in.
+     *
+     * <p>Note this reflects the <em>global</em> model, not what is on disk: entries the local device
+     * never downloaded still show up here. That is exactly what makes browsing before downloading
+     * possible.
+     */
+    public void getBrowse(String folderId, String prefix, OnResultListener1<List<BrowseEntry>> listener) {
+        ImmutableMap<String, String> params = (prefix == null || prefix.isEmpty())
+                ? ImmutableMap.of("folder", folderId)
+                : ImmutableMap.of("folder", folderId, "prefix", prefix);
+        new GetRequest(mContext, mUrl, GetRequest.URI_DB_BROWSE, mApiKey, params, result -> {
+            List<BrowseEntry> entries;
+            try {
+                entries = mGson.fromJson(result, new TypeToken<List<BrowseEntry>>() {}.getType());
+            } catch (Exception e) {
+                Log.w(TAG, "getBrowse: failed to parse response", e);
+                entries = null;
+            }
+            listener.onResult(entries == null ? Collections.emptyList() : entries);
+        }, error -> {});
+    }
+
+    /**
+     * Requests the state of a single path: {@code GET /rest/db/file}.
+     *
+     * <p>A path absent from the index answers 404, which — like every other failure — never reaches
+     * the success listener (see {@link GetRequest}). Callers therefore have to work with a timeout
+     * and treat "no answer" as "unknown", never as "safe to delete".
+     */
+    public void getFileInfo(String folderId, String path, OnResultListener1<SyncthingFileInfo> listener) {
+        new GetRequest(mContext, mUrl, GetRequest.URI_DB_FILE, mApiKey,
+                ImmutableMap.of("folder", folderId, "file", path), result -> {
+            SyncthingFileInfo info;
+            try {
+                info = mGson.fromJson(result, SyncthingFileInfo.class);
+            } catch (Exception e) {
+                Log.w(TAG, "getFileInfo: failed to parse response", e);
+                info = null;
+            }
+            listener.onResult(info);
+        }, error -> {});
     }
 
     /**

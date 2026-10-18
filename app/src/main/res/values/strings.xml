@@ -326,6 +326,14 @@
 
     <string name="ignore_patterns">Ignore Patterns</string>
 
+    <!-- Selective sync: switch + entry at the bottom of the folder edit screen -->
+    <string name="selective_sync_title">Selective Sync</string>
+    <string name="verify_files_title">Verify Files</string>
+    <string name="selective_sync_entry">Select folders and files to sync</string>
+    <string name="selective_sync_description">Only the checked folders and files are synced to this device. Turn off to sync everything again.</string>
+    <string name="selective_sync_state_on">On - partial sync</string>
+    <string name="selective_sync_state_off">Off - sync everything</string>
+
     <!-- DeviceActivity -->
 
     <!-- Setting title -->
