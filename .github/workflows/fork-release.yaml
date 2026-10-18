@@ -1,0 +1,170 @@
+name: Fork Release (signed APK)
+
+# 面向 fork 仓库的发布流程。
+# 上游 release-app.yaml 有 `if: github.repository_owner == 'researchxxl'` 限制且依赖上游签名密钥，
+# 在 fork 上无法使用，故提供一个自签名版本：构建 -> 用 CI 现场生成的密钥签名 -> 创建 Release。
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (must already exist, e.g. v2.1.7.0-fork.1)'
+        required: true
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Debug
+    uses: ./.github/workflows/common-build.yaml
+    with:
+      buildType: "Debug"
+      checkoutRef: ${{ inputs.tag || github.ref_name }}
+
+  sign:
+    name: Sign APK
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # 签名密钥必须跨构建复用：每次重新生成会导致各版本签名不一致，
+      # Android 会拒绝覆盖安装（只能卸载后重装）。
+      - name: Restore signing keystore from cache
+        id: keystore_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/keystore/fork-release.jks
+          key: fork-release-signing-keystore-v1
+
+      - name: Restore signing keystore
+        env:
+          KS_B64: ${{ secrets.FORK_SIGNING_KEYSTORE }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/keystore"
+          KS="$RUNNER_TEMP/keystore/fork-release.jks"
+          if [ -n "$KS_B64" ]; then
+            # 优先用仓库 Secret 里的固定密钥：永久有效，不受缓存过期影响
+            printf '%s' "$KS_B64" | base64 -d > "$KS"
+            echo "使用仓库 Secret 中的固定签名密钥"
+          elif [ -s "$KS" ]; then
+            echo "复用缓存的签名密钥"
+          else
+            echo "缓存中没有密钥，生成新的（本次构建结束时会写入缓存供后续复用）"
+            keytool -genkeypair -keystore "$KS" \
+              -alias fork -keyalg RSA -keysize 2048 -validity 10950 \
+              -storepass android -keypass android \
+              -dname "CN=Syncthing-Fork CI" -noprompt
+          fi
+
+      - name: Download unsigned APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-com.qtjay.syncthingfork.opt
+          path: ./artifacts
+
+      - name: Install Android build-tools
+        run: |
+          set -eu
+          export ANDROID_HOME="$HOME/android-sdk"
+          CMDLINE_TOOLS_VERSION="$(grep 'android-cmdline-tools = ' gradle/libs.versions.toml | cut -d '"' -f 2)"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          cd "$ANDROID_HOME/cmdline-tools"
+          wget -q "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+          unzip -q "commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+          mv cmdline-tools latest
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;35.0.0" > /dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_PATH"
+
+      - name: Sign APK with cached keystore
+        run: |
+          set -eu
+          mkdir -p signed
+          cp "$RUNNER_TEMP/keystore/fork-release.jks" ./fork-release.jks
+          for apk in $(find artifacts -name '*.apk'); do
+            echo "Signing $apk"
+            apksigner sign \
+              --ks fork-release.jks --ks-key-alias fork \
+              --ks-pass pass:android --key-pass pass:android \
+              --out "signed/$(basename "$apk")" "$apk"
+          done
+          apksigner verify signed/*.apk
+          ls -la signed
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-fork-release
+          path: |
+            signed/*.apk
+
+  release:
+    name: Create GitHub release
+    needs: [build, sign]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download signed APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-fork-release
+          path: ./signed
+
+      - name: Create release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: Syncthing-Fork ${{ inputs.tag || github.ref_name }} (selective sync)
+          files: |
+            signed/*.apk
+          body: |
+            Syncthing-Fork 个人构建，新增**选择性同步**：只同步手动勾选的文件夹或文件。
+
+            ## 功能特点
+            - 目录树可展开到任意层级，文件夹或单个文件都能勾选
+            - 顶部开关可随时在「选择性同步」与「全部同步」之间切换，选择集保留
+            - 父目录勾选/取消时子目录跟随；部分选中时父目录显示「－」
+            - 取消勾选会检查远端是否仍有副本：有则直接删除本地文件，
+              没有则提示「删除有风险」，可选保持勾选或强制删除
+            - 已勾选目录里后续新增的文件自动同步
+            - 目录结构缓存在本机，离线也能查看
+            - 独立包名 `com.qtjay.syncthingfork.opt`，可与官方版本共存
+            - 完全在 wrapper 层基于 `.stignore` 实现，未改动 Go 内核
+            - 规则生成已通过 syncthing v2.1.6 双节点端到端真值校验
+
+            ## 说明
+            - 构建类型：Debug
+            - 签名：本仓库的固定自签名密钥（与官方发布签名不同，不能覆盖官方版本）
+            - 已知限制：忽略规则对收发双向生效，未勾选的内容本机不会下载也不会上传
+
+            ## 作者与致谢
+            - 发起者与真正作者：[qtjay](https://github.com/qtjay)（需求、设计、真机验证）
+            - 代码实现：AI 助手 WorkBuddy 在 qtjay 指导下完成
+            - 感谢上游 [researchxxl](https://github.com/researchxxl/syncthing-android)
+              及历任维护者 Catfriend1、imsodin、nutomic，以及 syncthing/syncthing 官方项目
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
