@@ -313,7 +313,7 @@ public class FolderActivity extends SyncthingActivity {
                 SelectiveSyncPatterns.buildStignore(
                         currentIgnoreListText(),
                         selected,
-                        mSelectiveSyncStore.fullDirs(mFolder.id),
+                        mSelectiveSyncStore.fullDirs(mFolder.id)
                 ).text
         );
     }
