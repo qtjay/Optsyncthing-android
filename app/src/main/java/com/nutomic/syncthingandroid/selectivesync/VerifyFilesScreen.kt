@@ -1,6 +1,8 @@
 package com.nutomic.syncthingandroid.selectivesync
 
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,9 +12,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -416,158 +422,171 @@ fun VerifyFilesScreen(
         out
     }
 
-    Column(modifier = modifier.padding(horizontal = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("←") }
-            Text(
-                "校验文件",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+    // Scaffold 负责系统栏 insets：enableEdgeToEdge 之后内容会延伸到状态栏底下，
+    // 不处理的话标题会被手机顶部时间栏盖住。
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("校验文件", maxLines = 1) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回",
+                        )
+                    }
+                },
             )
-        }
-        if (folderScanning) {
-            Text(
-                "Syncthing 正在扫描该文件夹，此时索引还在变动，" +
-                    "判断结果不可靠 —— 已暂停扫描与删除，请等扫描完成。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
-        }
-        Text(
-            "按当前规则，下面这些文件本不该还留在本机（已忽略但磁盘上还在）。" +
-                "危险的分在前面且不勾，安全的已默认勾上。" +
-                "要保留某个子项，展开它的父目录再单独取消即可。",
-            style = MaterialTheme.typography.bodySmall,
-        )
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .padding(horizontal = 12.dp),
         ) {
-            OutlinedButton(
-                onClick = { scan() },
-                enabled = ready && !scanning && !deleting && !folderScanning,
-            ) {
-                Text(if (scanning) "扫描中…" else "重新扫描")
-            }
-            TextButton(
-                onClick = {
-                    val all = excess.map { it.path }.toSet()
-                    chosen = if (chosen.size == all.size) emptySet() else all
-                },
-                enabled = excess.isNotEmpty() && !deleting,
-            ) {
-                Text(if (chosen.size == excess.size && excess.isNotEmpty()) "全不选" else "全选")
-            }
-            // 恢复默认：勾上所有被忽略的，根目录新增的保持不勾
-            TextButton(
-                onClick = {
-                    val picked = excess.filter { it.kind == ExcessKind.IGNORED }
-                        .map { it.path }.toSet()
-                    chosen = picked.filter { path ->
-                        picked.none { other -> other != path && path.startsWith("$other/") }
-                    }.toSet()
-                },
-                enabled = excess.isNotEmpty() && !deleting,
-            ) {
-                Text("只选被忽略的")
-            }
-        }
-
-        progressLabel?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 6.dp),
-            )
-        }
-
-        when {
-            scanning && excess.isEmpty() -> {
-                Text("扫描中…", modifier = Modifier.padding(16.dp))
-            }
-
-            excess.isEmpty() -> {
+                if (folderScanning) {
                 Text(
-                    "没有需要处理的条目，本机内容与当前勾选一致。",
+                    "Syncthing 正在扫描该文件夹，此时索引还在变动，" +
+                        "判断结果不可靠 —— 已暂停扫描与删除，请等扫描完成。",
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            }
+            Text(
+                "按当前规则，下面这些文件本不该还留在本机（已忽略但磁盘上还在）。" +
+                    "危险的分在前面且不勾，安全的已默认勾上。" +
+                    "要保留某个子项，展开它的父目录再单独取消即可。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { scan() },
+                    enabled = ready && !scanning && !deleting && !folderScanning,
+                ) {
+                    Text(if (scanning) "扫描中…" else "重新扫描")
+                }
+                TextButton(
+                    onClick = {
+                        val all = excess.map { it.path }.toSet()
+                        chosen = if (chosen.size == all.size) emptySet() else all
+                    },
+                    enabled = excess.isNotEmpty() && !deleting,
+                ) {
+                    Text(if (chosen.size == excess.size && excess.isNotEmpty()) "全不选" else "全选")
+                }
+                // 恢复默认：勾上所有被忽略的，根目录新增的保持不勾
+                TextButton(
+                    onClick = {
+                        val picked = excess.filter { it.kind == ExcessKind.IGNORED }
+                            .map { it.path }.toSet()
+                        chosen = picked.filter { path ->
+                            picked.none { other -> other != path && path.startsWith("$other/") }
+                        }.toSet()
+                    },
+                    enabled = excess.isNotEmpty() && !deleting,
+                ) {
+                    Text("只选被忽略的")
+                }
+            }
+
+            progressLabel?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(vertical = 6.dp),
                 )
             }
 
-            else -> {
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(
-                        rows,
-                        key = { row ->
+            when {
+                scanning && excess.isEmpty() -> {
+                    Text("扫描中…", modifier = Modifier.padding(16.dp))
+                }
+
+                excess.isEmpty() -> {
+                    Text(
+                        "没有需要处理的条目，本机内容与当前勾选一致。",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
+                }
+
+                else -> {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(
+                            rows,
+                            key = { row ->
+                                when (row) {
+                                    is CleanupRow.Header -> "hdr_" + row.kind
+                                    is CleanupRow.Entry -> row.item.path
+                                }
+                            },
+                        ) { row ->
                             when (row) {
-                                is CleanupRow.Header -> "hdr_" + row.kind
-                                is CleanupRow.Entry -> row.item.path
-                            }
-                        },
-                    ) { row ->
-                        when (row) {
-                            is CleanupRow.Header -> ExcessGroupHeader(row.kind)
-                            is CleanupRow.Entry -> {
-                                val entry = row.item
-                                val on = chosen.contains(entry.path)
-                                val open = expanded.contains(entry.path)
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = (row.depth * 16).dp)
-                                        .clickable(enabled = !deleting) {
-                                            toggle(entry.path, !on)
-                                        }
-                                        .padding(vertical = 4.dp),
-                                ) {
-                                    Checkbox(
-                                        checked = on,
-                                        onCheckedChange = { want -> toggle(entry.path, want) },
-                                        enabled = !deleting,
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            entry.path + if (entry.dir) "/" else "",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
+                                is CleanupRow.Header -> ExcessGroupHeader(row.kind)
+                                is CleanupRow.Entry -> {
+                                    val entry = row.item
+                                    val on = chosen.contains(entry.path)
+                                    val open = expanded.contains(entry.path)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = (row.depth * 16).dp)
+                                            .clickable(enabled = !deleting) {
+                                                toggle(entry.path, !on)
+                                            }
+                                            .padding(vertical = 4.dp),
+                                    ) {
+                                        Checkbox(
+                                            checked = on,
+                                            onCheckedChange = { want -> toggle(entry.path, want) },
+                                            enabled = !deleting,
                                         )
-                                        Text(
-                                            entry.note,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = when (entry.kind) {
-                                                ExcessKind.ROOT_NEW ->
-                                                    MaterialTheme.colorScheme.error
-                                                ExcessKind.IGNORED ->
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                        )
-                                    }
-                                    if (entry.dir) {
-                                        TextButton(
-                                            onClick = { toggleExpand(entry) },
-                                            enabled = !deleting && !folderScanning,
-                                        ) {
-                                            Text(if (open) "收起" else "展开")
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                entry.path + if (entry.dir) "/" else "",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                entry.note,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = when (entry.kind) {
+                                                    ExcessKind.ROOT_NEW ->
+                                                        MaterialTheme.colorScheme.error
+                                                    ExcessKind.IGNORED ->
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                            )
                                         }
-                                    }
-                                    if (entry.kind == ExcessKind.ROOT_NEW) {
-                                        TextButton(
-                                            onClick = {
-                                                includeInSync(
-                                                    listOf(entry.path),
-                                                    if (entry.dir) setOf(entry.path) else emptySet(),
-                                                )
-                                            },
-                                            enabled = !deleting && !folderScanning,
-                                        ) {
-                                            Text("保留")
+                                        if (entry.dir) {
+                                            TextButton(
+                                                onClick = { toggleExpand(entry) },
+                                                enabled = !deleting && !folderScanning,
+                                            ) {
+                                                Text(if (open) "收起" else "展开")
+                                            }
+                                        }
+                                        if (entry.kind == ExcessKind.ROOT_NEW) {
+                                            TextButton(
+                                                onClick = {
+                                                    includeInSync(
+                                                        listOf(entry.path),
+                                                        if (entry.dir) setOf(entry.path) else emptySet(),
+                                                    )
+                                                },
+                                                enabled = !deleting && !folderScanning,
+                                            ) {
+                                                Text("保留")
+                                            }
                                         }
                                     }
                                 }
@@ -576,36 +595,35 @@ fun VerifyFilesScreen(
                     }
                 }
             }
-        }
 
-        if (excess.isNotEmpty()) {
-            Button(
-                onClick = { confirmDelete = true },
-                enabled = chosen.isNotEmpty() && !deleting && !folderScanning,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (deleting) "删除中…" else "删除选中的 ${chosen.size} 项")
+            if (excess.isNotEmpty()) {
+                Button(
+                    onClick = { confirmDelete = true },
+                    enabled = chosen.isNotEmpty() && !deleting && !folderScanning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (deleting) "删除中…" else "删除选中的 ${chosen.size} 项")
+                }
+                OutlinedButton(
+                    onClick = {
+                        includeInSync(
+                            excess.map { it.path },
+                            excess.filter { it.dir }.map { it.path }.toSet(),
+                        )
+                    },
+                    enabled = !deleting && !folderScanning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("把保留的 ${excess.size} 项纳入同步")
+                }
             }
-            OutlinedButton(
-                onClick = {
-                    includeInSync(
-                        excess.map { it.path },
-                        excess.filter { it.dir }.map { it.path }.toSet(),
-                    )
-                },
-                enabled = !deleting && !folderScanning,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("把保留的 ${excess.size} 项纳入同步")
-            }
-        }
 
-        message?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
+            message?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
         }
     }
 
@@ -661,5 +679,6 @@ fun VerifyFilesScreen(
                 TextButton(onClick = { confirmDelete = false }) { Text("取消") }
             },
         )
+            }
     }
 }

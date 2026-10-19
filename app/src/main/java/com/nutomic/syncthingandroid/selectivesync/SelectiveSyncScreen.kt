@@ -10,11 +10,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -629,184 +636,206 @@ fun SelectiveSyncScreen(
         }
     }
 
-    Column(modifier = modifier.padding(horizontal = 12.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            TextButton(onClick = onBack) { Text("←") }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "选择性同步",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    folderLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Switch(checked = enabled, onCheckedChange = onToggleEnabled, enabled = !busy)
-        }
-
-        Text(
-            "关闭＝全部同步（移除本功能生成的规则块，你自己写的规则保留）。" +
-                "开启后，只有勾上的目录/文件会同步到本机。",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(vertical = 4.dp),
-        )
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("目录树", modifier = Modifier.weight(1f))
-            TextButton(
-                onClick = {
-                    scope.launch {
-                        refreshing = true
-                        refreshFromRemote()
-                        baseline = currentSelection()
-                        persist()
-                        refreshing = false
+    // Scaffold 负责系统栏 insets：enableEdgeToEdge 之后内容会延伸到状态栏底下，
+    // 不处理的话标题会被手机顶部时间栏盖住。
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            "选择性同步",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            folderLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 },
-                enabled = ready && !refreshing && !busy,
-            ) {
-                Text(if (refreshing) "刷新中…" else "刷新")
-            }
-            OutlinedButton(
-                onClick = {
-                    val allRowsOn = rows.isNotEmpty() && rows.all { stateOf(it) == TriState.ON }
-                    if (allRowsOn) {
-                        fullDirs.clear()
-                        partialDirs.clear()
-                        selectedFiles.clear()
-                    } else {
-                        for (row in rows) {
-                            if (row.dir) markFull(row.path) else selectedFiles[row.path] = true
-                        }
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回",
+                        )
                     }
-                    persist()
                 },
-                enabled = rows.isNotEmpty(),
-            ) {
-                val allRowsOn = rows.isNotEmpty() && rows.all { stateOf(it) == TriState.ON }
-                Text(if (allRowsOn) "全取消" else "全选")
-            }
-        }
-
-        when {
-            !ready -> {
-                Text(
-                    "正在等待 Syncthing 就绪…",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(16.dp),
-                )
-            }
-
-            loading && rows.isEmpty() -> {
-                Text("加载中…", modifier = Modifier.padding(16.dp))
-            }
-
-            rows.isEmpty() -> {
-                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                    if (paused) {
-                        Text("已暂停下载，本机不会下载任何内容。")
-                        Text(
-                            "等本机扫描完成，这里会自动出现目录结构；" +
-                                "届时勾选要同步的内容，保存即开始下载。",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    } else {
-                        Text("还没有目录结构，本机可能还在首次扫描。")
-                        Text(
-                            "可以先暂停下载，免得文件先下来一大堆；" +
-                                "等目录结构出现后再勾选要同步的内容。",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Button(
-                            onClick = { pauseDownload() },
-                            enabled = !pausing && !busy,
-                            modifier = Modifier.padding(top = 8.dp),
-                        ) {
-                            Text(if (pausing) "正在暂停…" else "暂停下载")
-                        }
-                    }
-                    TextButton(
-                        onClick = { scope.launch { refreshFromRemote() } },
-                        enabled = !loading && !busy,
-                    ) {
-                        Text("立即重试")
-                    }
-                }
-            }
-
-            else -> {
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    itemsIndexed(rows) { index, row ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onRowClick(index, row) }
-                                .padding(
-                                    horizontal = (4 + row.depth * 16).dp,
-                                    vertical = 2.dp,
-                                ),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TriCheckbox(
-                                state = stateOf(row),
-                                onToggle = { onToggle(row, it) },
-                            )
-                            val label = when {
-                                row.dir && row.loading -> "${row.name}/ …"
-                                row.dir -> "${row.name}/"
-                                else -> row.name
-                            }
-                            Text(
-                                text = label,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Button(
-                onClick = { save() },
-                enabled = ready && !busy,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(if (busy) "保存中…" else "保存")
-            }
-            OutlinedButton(
-                onClick = onOpenVerifyFiles,
-                enabled = ready && !busy,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("校验文件")
-            }
-        }
-
-        message?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(vertical = 8.dp),
+                actions = {
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = onToggleEnabled,
+                        enabled = !busy,
+                    )
+                },
             )
+        },
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .padding(horizontal = 12.dp),
+        ) {
+                Text(
+                "关闭＝全部同步（移除本功能生成的规则块，你自己写的规则保留）。" +
+                    "开启后，只有勾上的目录/文件会同步到本机。",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("目录树", modifier = Modifier.weight(1f))
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            refreshing = true
+                            refreshFromRemote()
+                            baseline = currentSelection()
+                            persist()
+                            refreshing = false
+                        }
+                    },
+                    enabled = ready && !refreshing && !busy,
+                ) {
+                    Text(if (refreshing) "刷新中…" else "刷新")
+                }
+                OutlinedButton(
+                    onClick = {
+                        val allRowsOn = rows.isNotEmpty() && rows.all { stateOf(it) == TriState.ON }
+                        if (allRowsOn) {
+                            fullDirs.clear()
+                            partialDirs.clear()
+                            selectedFiles.clear()
+                        } else {
+                            for (row in rows) {
+                                if (row.dir) markFull(row.path) else selectedFiles[row.path] = true
+                            }
+                        }
+                        persist()
+                    },
+                    enabled = rows.isNotEmpty(),
+                ) {
+                    val allRowsOn = rows.isNotEmpty() && rows.all { stateOf(it) == TriState.ON }
+                    Text(if (allRowsOn) "全取消" else "全选")
+                }
+            }
+
+            when {
+                !ready -> {
+                    Text(
+                        "正在等待 Syncthing 就绪…",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+
+                loading && rows.isEmpty() -> {
+                    Text("加载中…", modifier = Modifier.padding(16.dp))
+                }
+
+                rows.isEmpty() -> {
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        if (paused) {
+                            Text("已暂停下载，本机不会下载任何内容。")
+                            Text(
+                                "等本机扫描完成，这里会自动出现目录结构；" +
+                                    "届时勾选要同步的内容，保存即开始下载。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        } else {
+                            Text("还没有目录结构，本机可能还在首次扫描。")
+                            Text(
+                                "可以先暂停下载，免得文件先下来一大堆；" +
+                                    "等目录结构出现后再勾选要同步的内容。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Button(
+                                onClick = { pauseDownload() },
+                                enabled = !pausing && !busy,
+                                modifier = Modifier.padding(top = 8.dp),
+                            ) {
+                                Text(if (pausing) "正在暂停…" else "暂停下载")
+                            }
+                        }
+                        TextButton(
+                            onClick = { scope.launch { refreshFromRemote() } },
+                            enabled = !loading && !busy,
+                        ) {
+                            Text("立即重试")
+                        }
+                    }
+                }
+
+                else -> {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        itemsIndexed(rows) { index, row ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onRowClick(index, row) }
+                                    .padding(
+                                        horizontal = (4 + row.depth * 16).dp,
+                                        vertical = 2.dp,
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TriCheckbox(
+                                    state = stateOf(row),
+                                    onToggle = { onToggle(row, it) },
+                                )
+                                val label = when {
+                                    row.dir && row.loading -> "${row.name}/ …"
+                                    row.dir -> "${row.name}/"
+                                    else -> row.name
+                                }
+                                Text(
+                                    text = label,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Button(
+                    onClick = { save() },
+                    enabled = ready && !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (busy) "保存中…" else "保存")
+                }
+                OutlinedButton(
+                    onClick = onOpenVerifyFiles,
+                    enabled = ready && !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("校验文件")
+                }
+            }
+
+            message?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
         }
-        Spacer(modifier = Modifier.height(8.dp))
     }
 }
