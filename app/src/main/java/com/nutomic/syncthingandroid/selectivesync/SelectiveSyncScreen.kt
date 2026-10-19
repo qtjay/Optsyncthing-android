@@ -305,12 +305,6 @@ fun SelectiveSyncScreen(
         align(selectedFiles)
     }
 
-    suspend fun refreshFromRemote() {
-        stignoreText = withContext(Dispatchers.IO) { repo.readIgnores() }
-        refreshTree()
-        applyParsed(SelectiveSyncPatterns.parseManagedBlock(stignoreText))
-    }
-
     /**
      * 把反解出来的勾选写回界面。
      *
@@ -347,6 +341,12 @@ fun SelectiveSyncScreen(
     }
 
     /** 保存之后用：目录结构没动过，只有规则变了，所以只读回 .stignore 反解。 */
+    suspend fun refreshFromRemote() {
+        stignoreText = withContext(Dispatchers.IO) { repo.readIgnores() }
+        refreshTree()
+        applyParsed(SelectiveSyncPatterns.parseManagedBlock(stignoreText))
+    }
+
     suspend fun refreshRulesOnly() {
         stignoreText = withContext(Dispatchers.IO) { repo.readIgnores() }
         applyParsed(SelectiveSyncPatterns.parseManagedBlock(stignoreText))
