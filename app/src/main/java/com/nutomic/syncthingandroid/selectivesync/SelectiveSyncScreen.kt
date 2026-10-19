@@ -110,7 +110,7 @@ fun SelectiveSyncScreen(
     /** 打开时读到的基准勾选，用于计算"本次取消了哪些"。 */
     var baseline by remember { mutableStateOf(SelectionSets()) }
     /** 取消勾选触发的祖先拆分还没做完；保存前必须等它，否则写出去的是旧状态。 */
-    var pendingToggle by mutableStateOf<Job?>(null)
+    var pendingToggle by remember { mutableStateOf<Job?>(null) }
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
