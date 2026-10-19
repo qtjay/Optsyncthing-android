@@ -2,6 +2,7 @@ package com.nutomic.syncthingandroid.util;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.text.TextUtils;
 
 import androidx.preference.PreferenceManager;
 
@@ -31,6 +32,7 @@ public final class SelectiveSyncStore {
     private static final String PREF_ENABLED = "selective_sync_enabled_";
     private static final String PREF_PAUSED = "selective_sync_paused_";
     private static final String PREF_SELECTION = "selective_sync_selection_";
+    private static final String PREF_EXPANDED = "selective_sync_expanded_";
 
     private final SharedPreferences mPrefs;
 
@@ -81,6 +83,34 @@ public final class SelectiveSyncStore {
     }
 
     /**
+     * 展开过的目录路径。
+     *
+     * <p>不持久化的话，每次打开目录树都只有根目录一层，用户得一路重新点开；
+     * 更糟的是深层路径在 rows 里不存在，反解时判断不出它是目录还是文件，
+     * 只能先塞进 partialDirs —— 文件因此永远显示成"未勾选"。
+     */
+    public Set<String> expandedPaths(String folderId) {
+        Set<String> out = new LinkedHashSet<>();
+        String raw = mPrefs.getString(PREF_EXPANDED + folderId, "");
+        if (raw == null || raw.isEmpty()) {
+            return out;
+        }
+        for (String line : raw.split("\n")) {
+            if (!line.trim().isEmpty()) {
+                out.add(line);
+            }
+        }
+        return out;
+    }
+
+    public void saveExpanded(String folderId, Set<String> paths) {
+        mPrefs.edit().putString(
+                PREF_EXPANDED + folderId,
+                paths == null ? "" : TextUtils.join("\n", paths)
+        ).apply();
+    }
+
+    /**
      * 覆盖写入选择集。
      *
      * @param selected 所有被勾选的路径
@@ -106,6 +136,7 @@ public final class SelectiveSyncStore {
                 .remove(PREF_ENABLED + folderId)
                 .remove(PREF_PAUSED + folderId)
                 .remove(PREF_SELECTION + folderId)
+                .remove(PREF_EXPANDED + folderId)
                 .apply();
     }
 

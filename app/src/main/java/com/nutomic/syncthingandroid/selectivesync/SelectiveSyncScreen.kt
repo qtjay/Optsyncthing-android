@@ -184,10 +184,13 @@ fun SelectiveSyncScreen(
         if (kids.isEmpty()) {
             return if (partialDirs.containsKey(row.path)) TriState.PARTIAL else TriState.OFF
         }
-        val on = kids.count { stateOf(it) == TriState.ON }
+        // 聚合时**不能只数 ON 的子项**：子项是 PARTIAL 也说明"这里有内容在同步"，
+        // 漏数它会让"有一个子项部分选中"的父目录被判成 OFF —— 那正是
+        // "电影"文件夹显示取消勾选的原因。
+        val states = kids.map { stateOf(it) }
         return when {
-            on == 0 -> TriState.OFF
-            on == kids.size -> TriState.ON
+            states.all { it == TriState.ON } -> TriState.ON
+            states.all { it == TriState.OFF } -> TriState.OFF
             else -> TriState.PARTIAL
         }
     }
@@ -247,9 +250,15 @@ fun SelectiveSyncScreen(
             .sortedWith(compareBy({ !it.dir }, { it.name }))
     }
 
-    /** 按当前展开状态重新拉取所有可见行。 */
+    /**
+     * 按当前展开状态重新拉取所有可见行。
+     *
+     * <p>展开集合要并入上次持久化的那份：否则每次打开都只有根目录一层，
+     * 深层路径不在 rows 里，反解时判断不出目录还是文件，勾选状态会显示错。
+     */
     suspend fun refreshTree() {
-        val expanded = rows.filter { it.expanded }.map { it.path }.toSet()
+        val expanded = rows.filter { it.expanded }.map { it.path }.toSet() +
+                store.expandedPaths(repo.folderId)
         val built = ArrayList<TreeRow>()
         suspend fun walk(prefix: String) {
             for (row in fetchChildren(prefix)) {
@@ -279,19 +288,25 @@ fun SelectiveSyncScreen(
     }
 
     /**
-     * 把勾选集合的 key 对齐到目录树里的真实路径。
+     * 把勾选集合的 key 对齐到目录树里的真实路径，并按真实类型重新分桶。
      *
-     * <p>反解出来的路径可能是退化形式（名称以 `(` 开头被写成 `?`）。
-     * 当时目录树还没加载到那一层时无法还原；等展开加载到之后再对齐一次，
-     * 否则界面上显示"没勾选"，而 .stignore 里规则其实已经生效。
+     * <p>两件事都必须做，缺一不可：
+     * <ol>
+     *   <li><b>还原 key</b>：反解出来的路径可能是退化形式（名称以 `(` 开头被写成 `?`）；
+     *       当时目录树还没加载到那一层时无法还原；</li>
+     *   <li><b>重新分桶</b>：rows 还没加载到那一层时，`dirKind` 返回 null，
+     *       `applyParsed` 只能把路径先塞进 partialDirs —— **文件也会被塞进去**。
+     *       而 `stateOf` 对文件只查 selectedFiles，所以它会永远显示"未勾选"。
+     *       等展开加载到真实行之后，必须把放错桶的挪回去。</li>
+     * </ol>
      *
-     * <p>只改 key，不动勾选结果 —— 对齐前后"勾了哪些项"是完全一样的。
+     * <p>只改 key 不动桶是不够的 —— 那正是"没取消的文件第二次打开显示取消"的原因。
      */
     fun alignSelectionKeys() {
         if (rows.isEmpty()) {
             return
         }
-        fun align(map: SnapshotStateMap<String, Boolean>) {
+        fun realign(map: SnapshotStateMap<String, Boolean>) {
             for (key in map.keys.toList()) {
                 val real = realPath(key)
                 if (real != key) {
@@ -300,9 +315,23 @@ fun SelectiveSyncScreen(
                 }
             }
         }
-        align(fullDirs)
-        align(partialDirs)
-        align(selectedFiles)
+        realign(fullDirs)
+        realign(partialDirs)
+        realign(selectedFiles)
+        // 重新分桶：partialDirs 里混进来的文件挪到 selectedFiles
+        for (key in partialDirs.keys.toList()) {
+            if (dirKind(key) == false) {
+                partialDirs.remove(key)
+                selectedFiles[key] = true
+            }
+        }
+        // selectedFiles 里混进来的目录挪到 partialDirs
+        for (key in selectedFiles.keys.toList()) {
+            if (dirKind(key) == true) {
+                selectedFiles.remove(key)
+                partialDirs[key] = true
+            }
+        }
     }
 
     /**
@@ -355,6 +384,7 @@ fun SelectiveSyncScreen(
     fun persist() {
         val current = currentSelection()
         store.save(repo.folderId, current.all().toList(), current.fullDirs)
+        store.saveExpanded(repo.folderId, rows.filter { it.expanded }.map { it.path }.toSet())
     }
 
     fun buildStignoreText(): String {

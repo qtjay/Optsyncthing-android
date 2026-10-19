@@ -25,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.nutomic.syncthingandroid.model.BrowseEntry
 import com.nutomic.syncthingandroid.util.SelectiveSyncPatterns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -125,30 +124,6 @@ private fun isExcess(path: String, dir: Boolean, selection: ExcessSelection): Bo
     return true
 }
 
-/**
- * 某一层内容的"指纹"：条目数 + 文件总大小 + 排序后的名字哈希。
- *
- * 两边指纹相同就认为这一层没有差异，不必再往下钻 —— 这是扫描性能的主要来源。
- */
-private fun layerSignature(entries: List<BrowseEntry>): String {
-    var count = 0
-    var total = 0L
-    val names = ArrayList<String>()
-    for (entry in entries) {
-        val name = entry.name
-        if (name.isNullOrEmpty() || PROTECTED_NAMES.contains(name)) {
-            continue
-        }
-        count++
-        names.add(name)
-        if (!entry.isDirectory()) {
-            total += entry.size
-        }
-    }
-    names.sort()
-    return "$count/$total/" + names.hashCode()
-}
-
 private data class Hit(
     val path: String,
     val dir: Boolean,
@@ -163,6 +138,11 @@ private data class Hit(
  * <p>判定走 .stignore 反解出来的勾选集合，与生成规则用的是同一份数据，
  * 不会出现"规则说忽略、界面说同步"的口径打架。命中整棵子树的目录不再往下钻 ——
  * 整棵都是多余的，直接整棵删。
+ *
+ * <p><b>下钻条件不能用"磁盘 vs 索引"的指纹</b>：被忽略的文件**仍然在全局模型里**，
+ * 所以一个已经同步的目录，磁盘内容和索引内容永远一致，指纹永远相同 ——
+ * 用它剪枝会导致永远发现不了深层被忽略的子项（实测表现就是"校验文件扫不到任何文件"）。
+ * 正确依据是勾选状态本身：整棵放行的目录不必下钻，其余一律下钻。
  */
 private suspend fun scanExcess(
     repo: SelectiveSyncRepository,
@@ -178,10 +158,6 @@ private suspend fun scanExcess(
             val disk = repo.listDisk(prefix)
             val remote = repo.browse(prefix)
             val remoteNames = remote.mapNotNull { it.name }.toSet()
-            // 剪枝：本机与索引在这一层一致，说明子树没有差异，不必再往下钻。
-            // 大文件夹里绝大多数目录都是一致的，这是把扫描时间压下来的关键。
-            val dive = depth < SCAN_MAX_DEPTH &&
-                layerSignature(disk) != layerSignature(remote)
             for (entry in disk) {
                 val name = entry.name ?: continue
                 if (name.isEmpty() || PROTECTED_NAMES.contains(name)) continue
@@ -190,7 +166,10 @@ private suspend fun scanExcess(
                 if (isExcess(path, dir, selection)) {
                     // 命中即停：整棵都是被忽略的，删掉父目录就够了，不必再逐条看
                     hits.add(Hit(path, dir, if (dir) -1L else entry.size, depth, remoteNames.contains(name)))
-                } else if (dir && dive) {
+                } else if (dir && depth < SCAN_MAX_DEPTH &&
+                    selection.fullDirs.none { patternMatchesPath(it, path) }) {
+                    // 整棵放行的目录不必下钻（里面必然全部同步）；
+                    // 其余一律下钻 —— 被忽略的子项不体现在"磁盘 vs 索引"的差异里。
                     next.add(path to depth + 1)
                 }
             }
