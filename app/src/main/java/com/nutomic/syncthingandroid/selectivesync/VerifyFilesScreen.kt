@@ -102,15 +102,19 @@ private fun classifyExcess(
 /**
  * 判断某个真实存在的路径是否"多余"—— 按当前勾选它本不该出现在磁盘上。
  *
+ * <p>比较必须走 [patternMatchesPath]：规则里的路径可能是退化形式
+ * （名称以 `(` 开头被写成 `?`）。直接用字符串相等会把已勾选的整棵目录
+ * 判成多余、建议删掉 —— 那是真的会丢数据的。
+ *
  * 只有三种情况要保留：整棵子树被放行、自己被放行、
  * 或者是通往某个被放行项的中间目录（没有它里面的选中项也进不去）。
  */
 private fun isExcess(path: String, dir: Boolean, selection: ExcessSelection): Boolean {
-    if (selection.fullDirs.contains(path)) return false
-    if (selection.selected.contains(path)) return false
+    if (selection.fullDirs.any { patternMatchesPath(it, path) }) return false
+    if (selection.selected.any { patternMatchesPath(it, path) }) return false
     var slash = path.indexOf('/')
     while (slash > 0) {
-        if (selection.fullDirs.contains(path.substring(0, slash))) return false
+        if (selection.fullDirs.any { patternMatchesPath(it, path.substring(0, slash)) }) return false
         slash = path.indexOf('/', slash + 1)
     }
     // 目录还可能是"通往被放行项的中间层"

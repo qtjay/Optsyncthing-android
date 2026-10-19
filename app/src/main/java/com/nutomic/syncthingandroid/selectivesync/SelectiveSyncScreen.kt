@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,6 +34,7 @@ import com.nutomic.syncthingandroid.model.BrowseEntry
 import com.nutomic.syncthingandroid.util.SelectiveSyncPatterns
 import com.nutomic.syncthingandroid.util.SelectiveSyncStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -107,6 +109,8 @@ fun SelectiveSyncScreen(
 
     /** 打开时读到的基准勾选，用于计算"本次取消了哪些"。 */
     var baseline by remember { mutableStateOf(SelectionSets()) }
+    /** 取消勾选触发的祖先拆分还没做完；保存前必须等它，否则写出去的是旧状态。 */
+    var pendingToggle by mutableStateOf<Job?>(null)
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -278,18 +282,62 @@ fun SelectiveSyncScreen(
             return
         }
         for (path in parsed.fullDirs) {
-            fullDirs[path] = true
+            fullDirs[realPath(path)] = true
         }
         for (path in parsed.selectedPaths) {
             if (parsed.fullDirs.contains(path)) {
                 continue
             }
-            when (dirKind(path)) {
-                true -> partialDirs[path] = true
-                false -> selectedFiles[path] = true
-                else -> partialDirs[path] = true
+            // 必须先还原成目录树里的真实名字再判断类型：
+            // 退化路径在 rows 里查不到，dirKind 会返回 null 把文件误放进 partialDirs
+            val real = realPath(path)
+            when (dirKind(real)) {
+                true -> partialDirs[real] = true
+                false -> selectedFiles[real] = true
+                else -> partialDirs[real] = true
             }
         }
+        alignSelectionKeys()
+    }
+
+    /**
+     * 把反解出来的路径还原成目录树里的真实路径。
+     *
+     * <p>目录树里找不到原样匹配时，按 glob 语义找：规则里的 `?` 匹配任意单字符，
+     * 这正是生成侧对"名称以 ( 开头"的兜底写法。
+     */
+    fun realPath(path: String): String {
+        if (rows.any { it.path == path }) {
+            return path
+        }
+        return rows.firstOrNull { patternMatchesPath(path, it.path) }?.path ?: path
+    }
+
+    /**
+     * 把勾选集合的 key 对齐到目录树里的真实路径。
+     *
+     * <p>反解出来的路径可能是退化形式（名称以 `(` 开头被写成 `?`）。
+     * 当时目录树还没加载到那一层时无法还原；等展开加载到之后再对齐一次，
+     * 否则界面上显示"没勾选"，而 .stignore 里规则其实已经生效。
+     *
+     * <p>只改 key，不动勾选结果 —— 对齐前后"勾了哪些项"是完全一样的。
+     */
+    fun alignSelectionKeys() {
+        if (rows.isEmpty()) {
+            return
+        }
+        fun align(map: SnapshotStateMap<String, Boolean>) {
+            for (key in map.keys.toList()) {
+                val real = realPath(key)
+                if (real != key) {
+                    map.remove(key)
+                    map[real] = true
+                }
+            }
+        }
+        align(fullDirs)
+        align(partialDirs)
+        align(selectedFiles)
     }
 
     suspend fun refreshFromRemote() {
@@ -392,7 +440,7 @@ fun SelectiveSyncScreen(
             persist()
             return
         }
-        scope.launch {
+        pendingToggle = scope.launch {
             materializeAncestors(row.path)
             removeWithDescendants(row)
             pruneEmptyPartialDirs()
@@ -416,6 +464,8 @@ fun SelectiveSyncScreen(
             if (parent != null) {
                 parent.loading = false
             }
+            // 新加载的行可能正好是之前无法还原的退化路径，对齐一次让勾选状态显示正确
+            alignSelectionKeys()
             persist()
         }
     }
@@ -454,10 +504,13 @@ fun SelectiveSyncScreen(
         busy = true
         onMessage(null)
         scope.launch {
+            // 取消勾选会先拆分祖先（要拉一次目录树），保存前必须等它做完，
+            // 否则写出去的是拆分前的旧状态 —— 表现就是"刚取消的又同步了"。
+            pendingToggle?.join()
             val text = buildStignoreText()
             val written = withContext(Dispatchers.IO) { repo.writeIgnores(text) }
             if (!written) {
-                onMessage("写入 .stignore 失败")
+                onMessage("写入 .stignore 失败，请重试；多次失败可先刷新再保存")
                 busy = false
                 return@launch
             }

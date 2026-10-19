@@ -9,6 +9,7 @@ import com.nutomic.syncthingandroid.model.FolderStatus
 import com.nutomic.syncthingandroid.service.RestApi
 import com.nutomic.syncthingandroid.util.ConfigRouter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -70,16 +71,38 @@ class SelectiveSyncRepository(
      * 写 .stignore，并回读校验。
      *
      * <p>只发不验会留下"界面显示成功、规则其实没生效"的假象 —— 那种问题在真机上极难排查，
-     * 所以宁可多花一次读取。
+     * 所以宁可多花一次读取。但校验不能逐字全等，两个原因都会让它永远对不上：
+     * <ol>
+     *   <li>Syncthing 保存 .stignore 时会丢掉空行（空行不是有效规则）；
+     *       [SelectiveSyncPatterns.buildStignore] 又刻意在托管块前插了一个空行；</li>
+     *   <li>REST 的 POST 是 fire-and-forget，紧接着回读可能读到写入前的旧内容。</li>
+     * </ol>
+     * 所以归一化（去空行、逐行 trim）后比较，并给几次重试。
      */
     suspend fun writeIgnores(text: String): Boolean = withContext(Dispatchers.IO) {
         val f = folder ?: return@withContext false
         val lines = text.split("\n").toTypedArray()
         runCatching { configRouter.postFolderIgnoreList(api, f, lines) }
             .onFailure { Log.w(TAG, "writeIgnores: 写入失败", it) }
-        val back = readIgnores()
-        back.trim() == text.trim()
+        val expected = normalizeIgnores(text)
+        repeat(VERIFY_ATTEMPTS) { attempt ->
+            if (normalizeIgnores(readIgnores()) == expected) {
+                return@withContext true
+            }
+            if (attempt < VERIFY_ATTEMPTS - 1) {
+                delay(VERIFY_RETRY_DELAY_MS)
+            }
+        }
+        Log.w(TAG, "writeIgnores: 回读校验未通过，期望 $expected")
+        false
     }
+
+    /** 归一化忽略规则文本：去空行、逐行 trim。用于写入后的回读比对。 */
+    private fun normalizeIgnores(text: String): String =
+        text.split("\n")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
 
     /** 让 Syncthing 立刻重扫该文件夹。 */
     suspend fun rescan() = withContext(Dispatchers.IO) {
@@ -172,6 +195,12 @@ class SelectiveSyncRepository(
     companion object {
         private const val TAG = "SelectiveSyncRepo"
         private const val TYPE_FILE = "FILE_INFO_TYPE_FILE"
+
+        /** 回读校验次数：写入是异步的，第一次回读很可能还是旧内容。 */
+        private const val VERIFY_ATTEMPTS = 3
+
+        /** 两次回读之间的间隔。 */
+        private const val VERIFY_RETRY_DELAY_MS = 400L
     }
 }
 
