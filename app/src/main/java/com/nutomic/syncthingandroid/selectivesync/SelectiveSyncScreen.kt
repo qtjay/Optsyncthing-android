@@ -266,41 +266,6 @@ fun SelectiveSyncScreen(
     }
 
     /**
-     * 把反解出来的勾选写回界面。
-     *
-     * <p>没有托管块 = 没有忽略规则 = 全部同步 → 所有已加载的行都打勾。
-     */
-    fun applyParsed(parsed: SelectiveSyncPatterns.Selection) {
-        fullDirs.clear()
-        partialDirs.clear()
-        selectedFiles.clear()
-        paused = parsed.paused
-        if (!parsed.hasBlock) {
-            for (row in rows) {
-                if (row.dir) fullDirs[row.path] = true else selectedFiles[row.path] = true
-            }
-            return
-        }
-        for (path in parsed.fullDirs) {
-            fullDirs[realPath(path)] = true
-        }
-        for (path in parsed.selectedPaths) {
-            if (parsed.fullDirs.contains(path)) {
-                continue
-            }
-            // 必须先还原成目录树里的真实名字再判断类型：
-            // 退化路径在 rows 里查不到，dirKind 会返回 null 把文件误放进 partialDirs
-            val real = realPath(path)
-            when (dirKind(real)) {
-                true -> partialDirs[real] = true
-                false -> selectedFiles[real] = true
-                else -> partialDirs[real] = true
-            }
-        }
-        alignSelectionKeys()
-    }
-
-    /**
      * 把反解出来的路径还原成目录树里的真实路径。
      *
      * <p>目录树里找不到原样匹配时，按 glob 语义找：规则里的 `?` 匹配任意单字符，
@@ -344,6 +309,41 @@ fun SelectiveSyncScreen(
         stignoreText = withContext(Dispatchers.IO) { repo.readIgnores() }
         refreshTree()
         applyParsed(SelectiveSyncPatterns.parseManagedBlock(stignoreText))
+    }
+
+    /**
+     * 把反解出来的勾选写回界面。
+     *
+     * <p>没有托管块 = 没有忽略规则 = 全部同步 → 所有已加载的行都打勾。
+     */
+    fun applyParsed(parsed: SelectiveSyncPatterns.Selection) {
+        fullDirs.clear()
+        partialDirs.clear()
+        selectedFiles.clear()
+        paused = parsed.paused
+        if (!parsed.hasBlock) {
+            for (row in rows) {
+                if (row.dir) fullDirs[row.path] = true else selectedFiles[row.path] = true
+            }
+            return
+        }
+        for (path in parsed.fullDirs) {
+            fullDirs[realPath(path)] = true
+        }
+        for (path in parsed.selectedPaths) {
+            if (parsed.fullDirs.contains(path)) {
+                continue
+            }
+            // 必须先还原成目录树里的真实名字再判断类型：
+            // 退化路径在 rows 里查不到，dirKind 会返回 null 把文件误放进 partialDirs
+            val real = realPath(path)
+            when (dirKind(real)) {
+                true -> partialDirs[real] = true
+                false -> selectedFiles[real] = true
+                else -> partialDirs[real] = true
+            }
+        }
+        alignSelectionKeys()
     }
 
     /** 保存之后用：目录结构没动过，只有规则变了，所以只读回 .stignore 反解。 */
